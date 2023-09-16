@@ -35,7 +35,6 @@ print(model_id + " loaded.")
 #     mq.create_index("events", model="hf/all_datasets_v4_MiniLM-L6")
 # except:
 #     pass
-
 app = Flask(__name__)
 
 global_game_state = {}

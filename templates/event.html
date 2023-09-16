@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ event.Title }}</title>
+</head>
+<body>
+    <div style="text-align:center;">
+        <h1>{{ event.Title }}</h1>
+        <p>{{ event.EventBody }}</p>
+        {% for action in event.PossibleActions %}
+            <form method="post">
+                <button type="submit" name="action" value="{{ action }}">{{ action }}</button>
+            </form>
+        {% endfor %}
+    </div>
+</body>
+</html>

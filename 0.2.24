@@ -1,0 +1,26 @@
+Collecting ctransformers[cuda]
+  Downloading ctransformers-0.2.27-py3-none-any.whl (9.9 MB)
+     ---------------------------------------- 9.9/9.9 MB 57.6 MB/s eta 0:00:00
+Collecting py-cpuinfo<10.0.0,>=9.0.0
+  Using cached py_cpuinfo-9.0.0-py3-none-any.whl (22 kB)
+Requirement already satisfied: huggingface-hub in c:\ai\obscura\obscura\lib\site-packages (from ctransformers[cuda]) (0.16.4)
+Collecting nvidia-cuda-runtime-cu12
+  Downloading nvidia_cuda_runtime_cu12-12.2.140-py3-none-win_amd64.whl (842 kB)
+     ---------------------------------------- 842.6/842.6 kB ? eta 0:00:00
+Collecting nvidia-cublas-cu12
+  Downloading nvidia_cublas_cu12-12.2.5.6-py3-none-win_amd64.whl (450.5 MB)
+     -------------------------------------- 450.5/450.5 MB 6.3 MB/s eta 0:00:00
+Requirement already satisfied: fsspec in c:\ai\obscura\obscura\lib\site-packages (from huggingface-hub->ctransformers[cuda]) (2023.6.0)
+Requirement already satisfied: tqdm>=4.42.1 in c:\ai\obscura\obscura\lib\site-packages (from huggingface-hub->ctransformers[cuda]) (4.66.1)
+Requirement already satisfied: packaging>=20.9 in c:\ai\obscura\obscura\lib\site-packages (from huggingface-hub->ctransformers[cuda]) (23.1)
+Requirement already satisfied: pyyaml>=5.1 in c:\ai\obscura\obscura\lib\site-packages (from huggingface-hub->ctransformers[cuda]) (6.0.1)
+Requirement already satisfied: typing-extensions>=3.7.4.3 in c:\ai\obscura\obscura\lib\site-packages (from huggingface-hub->ctransformers[cuda]) (4.7.1)
+Requirement already satisfied: filelock in c:\ai\obscura\obscura\lib\site-packages (from huggingface-hub->ctransformers[cuda]) (3.12.2)
+Requirement already satisfied: requests in c:\ai\obscura\obscura\lib\site-packages (from huggingface-hub->ctransformers[cuda]) (2.28.1)
+Requirement already satisfied: colorama in c:\ai\obscura\obscura\lib\site-packages (from tqdm>=4.42.1->huggingface-hub->ctransformers[cuda]) (0.4.6)
+Requirement already satisfied: certifi>=2017.4.17 in c:\ai\obscura\obscura\lib\site-packages (from requests->huggingface-hub->ctransformers[cuda]) (2022.12.7)
+Requirement already satisfied: charset-normalizer<3,>=2 in c:\ai\obscura\obscura\lib\site-packages (from requests->huggingface-hub->ctransformers[cuda]) (2.1.1)
+Requirement already satisfied: idna<4,>=2.5 in c:\ai\obscura\obscura\lib\site-packages (from requests->huggingface-hub->ctransformers[cuda]) (3.4)
+Requirement already satisfied: urllib3<1.27,>=1.21.1 in c:\ai\obscura\obscura\lib\site-packages (from requests->huggingface-hub->ctransformers[cuda]) (1.26.13)
+Installing collected packages: py-cpuinfo, nvidia-cuda-runtime-cu12, nvidia-cublas-cu12, ctransformers
+Successfully installed ctransformers-0.2.27 nvidia-cublas-cu12-12.2.5.6 nvidia-cuda-runtime-cu12-12.2.140 py-cpuinfo-9.0.0

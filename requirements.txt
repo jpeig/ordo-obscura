@@ -3,6 +3,7 @@ aiohttp==3.8.5
 aiosignal==1.3.1
 async-timeout==4.0.3
 attrs==23.1.0
+--extra-index-url https://huggingface.github.io/autogptq-index/whl/cu118/
 auto-gptq==0.4.2+cu118
 blinker==1.6.2
 cachetools==5.3.1
@@ -74,6 +75,7 @@ sympy==1.12
 tenacity==8.2.3
 tiktoken==0.4.0
 tokenizers==0.13.3
+--extra-index-url https://download.pytorch.org/whl/cu118
 torch==2.0.1+cu118
 torchaudio==2.0.2+cu118
 torchvision==0.15.2+cu118

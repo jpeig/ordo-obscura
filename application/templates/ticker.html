@@ -1,0 +1,53 @@
+<div id="ticker" class="timeline_container">
+    <div class="timeline">
+        <div class="mdl-card__title">
+            <h3 id="time" class="static">{{time}}</h3><h3> / </h3><h3 id="date" class="static">{{date}}</h3><h3> / </h3><h3 id="year" class="static">{{year}}</h3>
+        </div>
+        <div class="mdl-card__actions">
+            <input id="timeline-bar" class="mdl-slider mdl-js-slider" type="range" min="0" max="100" value="0"
+                tabindex="0">
+            <div class="mdl-tooltip" data-mdl-for="timeline-bar">
+                change speed of time
+            </div>
+            <div class="button-container">
+                <button id="mind_button" class="mdl-button mdl-js-button mdl-button--icon mdl-button--colored">
+                    <i class="material-icons">psychology_alt</i>
+                    <div class="mdl-tooltip" data-mdl-for="mind_button">
+                        mind view
+                    </div>
+                </button>
+                <button id="social_button" class="mdl-button mdl-js-button mdl-button--icon mdl-button--colored">
+                    <i class="material-icons">handshake</i>
+                    <div class="mdl-tooltip" data-mdl-for="social_button">
+                        social view
+                    </div>
+                </button>
+                <button id="material_button" class="mdl-button mdl-js-button mdl-button--icon mdl-button--colored">
+                    <i class="material-icons">paid</i>
+                    <div class="mdl-tooltip" data-mdl-for="material_button">
+                        material view
+                    </div>
+                </button>
+
+                <button id="journal_button" class="mdl-button mdl-js-button mdl-button--icon mdl-button--colored">
+                    <i class="material-icons">menu_book</i>
+                    <div class="mdl-tooltip" data-mdl-for="journal_button">
+                        journal
+                    </div>
+                </button>
+                <button id="settings_button" class="mdl-button mdl-js-button mdl-button--icon mdl-button--colored">
+                    <i class="material-icons">settings</i>
+                    <div class="mdl-tooltip" data-mdl-for="settings_button">
+                        settings
+                    </div>
+                </button>
+                <button id="menu_button" class="mdl-button mdl-js-button mdl-button--icon mdl-button--colored">
+                    <i class="material-icons">menu</i>
+                    <div class="mdl-tooltip" data-mdl-for="menu_button">
+                        toggle menu
+                    </div>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,311 +1,264 @@
-from flask import Blueprint, render_template, abort, request, jsonify, redirect, url_for, g
+from flask import Blueprint, render_template, abort, request, jsonify, redirect, url_for, g, current_app as app
 from jinja2 import TemplateNotFound
 from . import socketio
+import os
+from typing import Dict
 from config import Config
 import asyncio
 import textwrap
+import math
+import threading
 import json
 import sys
+import random
 import websockets
+import requests
+from functools import partial
+from threading import Timer
+from datetime import datetime, timedelta, time
 
-URI = Config.OOB_URI
+URI_WS = Config.OOB_URI_WS
 state = Blueprint('state', __name__,
                         template_folder='templates',
                         static_folder="static")
 
-@state.route('/')
-def main():
-    return redirect(url_for('state.gen_state'))
+class GameState():
+    def can_init_game():
+        return False
+    def can_change_speed():
+        return True
+    def transition(game, accepted_proposal=None):
+        print("Transitioning to next state")
 
-@state.route('/wizard', methods=['GET', 'POST'])
-def gen_state():
-    g.analysis_text = ""
-    if g.analysis_text != "":
-        analysis_text_insert = f"""
+class WIZARD_WAIT(GameState):
+    def can_init_game():
+        return True
+    def can_change_speed():
+        return False
+    def transition(game, accepted_proposal=None):
+        asyncio.run(stop_ticker(game))
+        print(game.__dict__)
+    
+class WIZARD_CALCULATE(GameState):
+    def can_init_game():
+        return True
+    def can_change_speed():
+        return False
+    def transition(game, accepted_proposal=None):
+        calculate_stats(game, accepted_proposal)
 
-            Consider the following analysis:
-            {g.analysis_text}
+class SELECT_MISSION_INIT(GameState):
+    def can_init_game():
+        return True
+    def transition(game, accepted_proposal):
+        compute_mission_selection(game, accepted_proposal)
 
-            """
+class CALCULATE_RESPONSE(GameState):
+    def transition(game, accepted_proposal: Dict):
+        asyncio.run(stop_ticker(game))
+        compute_event_response(game, accepted_proposal)
+    
+class GAME_INIT(GameState):
+    def transition(game, accepted_proposal):
+        launch_game_ui(game)
+        compute_next_event(game, accepted_proposal)
 
-    if request.method == 'POST':
+class GAME_WAIT(GameState):
+    def transition(game, accepted_proposal):
+        try:
+            loop = asyncio.get_event_loop()
+            loop.create_task(stop_ticker(game))
+        except RuntimeError:
+            # If no event loop is running, start one temporarily
+            asyncio.run(stop_ticker(game))
+    
+class GAME_TICKING(GameState):
+    def transition(game, accepted_proposal):
+        try:
+            loop = asyncio.get_event_loop()
+            loop.create_task(start_ticker(game, accepted_proposal['speed']))
+        except RuntimeError:
+            asyncio.run(start_ticker(game, accepted_proposal['speed']))
 
-        output_type = request.form.get('output')
-        user_input = request.form.get('storyInput')
-        function_req = request.form.get('function')
+# class RepeatingTimer(Timer):
+#     def run(self):
+#         while not self.finished.wait(self.interval):
+#             self.function(*self.args, **self.kwargs)
 
-        context = ""
-        json_schema = ""
 
-        if output_type == "text":
-            if function_req == "input_toStateAnalysis":
-                context = textwrap.dedent("""
-                ### Input:
-                You are an expert scenario and game state analyst. You distill stories into facts that are meaningful to the player. Your analysis will be used to generate a game state for a grand strategy game.
-                
-                The following is the scenario that you need to analyze:
+def calculate_stats(game, accepted_proposal):
+    # Extract perks and assets dynamically
+    worldview_key = accepted_proposal['values']['worldview']
+    s_class_key = accepted_proposal['values']['class']
+    personality_key = accepted_proposal['values']['personality']
 
-                """+user_input+"""
+    filename = os.path.join(app.static_folder, '', 'stats.json')
+    with open(filename) as f:
+        data = json.load(f)
+    worldview = data['worldview'][worldview_key]
+    s_class = data['s_class'][s_class_key]
+    personality = data['personality'][personality_key]
 
-                ### Instruction:
+    # Calculate stats
+    dominance = round(math.pow(worldview['Dominance'] * s_class['Dominance'] * personality['Dominance'],0.5))
+    influence = round(math.pow(worldview['Influence'] * s_class['Influence'] * personality['Influence'],0.5))
+    insight = round(math.pow(worldview['Insight'] * s_class['Insight'] * personality['Insight'],0.5))
+    wealth = math.pow((worldview['Wealth'] + personality['Wealth']),0.7)*s_class['Wealth']/2
+    debt_ratio = (s_class['Debt']/s_class['Wealth'])
+    debt = round(wealth * debt_ratio)
+    wealth = round(wealth)
 
-                Follow the steps exactly:
-                
-                1. Distill the facts from the story and group them into the following categories (more important to be accurate than to be creative):
-                1a. Player state: identify the player and all player traits, interests, passions, personality, perks, conditions, characteristics. Include at least the player's name, current physical location and goals.
-                1b. Player holdings: identify all assets, debts, finances and resources owned by the player. Quantify them.
-                1c. Player relationships: identify all agents (e.g. individuals, factions, groups) in the world and then analyze/quantify their relationships with the player.
-                1d. World state: identify all relevant facts and events about the world that are meaningful to the player.
+    game.com_style = worldview['com_style'] + ", " + s_class['com_style'] + ", " + personality['com_style']
 
-                2. Situation Analysis: to derrive which event or story needs to be generated, provide an exploratory analysis of the gamestate complexity, gamestate significance and narrative urgency (be creative and think outside the box):
-                2a. List the items that make the gamestate complex. E.g. "The player is in a complex situation because he has to struggle with conflicting x and y."
-                2b. List the items that make the gamestate significant. E.g. "The player has no x and y."
-                2c. List the items that are urgent to the player. E.g. "The player is in a dangerous location and needs to escape."
+    print("com_style: " + str(game.com_style))
 
-                General guidelines:
-                - A perk, condition or characteristic is NEVER OWNED by the player and NEVER DESCRIBES A RELATIONSHIP, so put it in 'Player state'.
-                - An asset, company, debt, loan, house, resource or anything the player owns NEVER DESCRIBES A RELATIONSHIP and is NEVER A CONDITION OR PERK CHARACTERIZING the player, so put it in 'Player holdings'.
-                - A relationship (including descriptive terms such as "Ally", "Wife", "Enemy", "Relationship", "Alliance") is NEVER OWNED by the player and is NEVER A CONDITION CHARACTERIZING the player, so put it in 'Player relationships'.
-                - Be meticulous and precise, and aim for specificity and relevance. E.g. "The player is location {x/}" is more specific and relevant than "The player is in the world".
-                - Analyze/distill from the player's perspective and quantify where possible (e.g. the strength of a relationship or the amount of money). E.g. "50" is a quantified value for the relationship with an actor or agent.
+    game.player_hidden_pos_traits = worldview['pos_trait'] + ", " + s_class['pos_trait'] + ", " + personality['pos_trait']
+    game.player_hidden_neg_traits = worldview['pos_trait'] + ", " + s_class['pos_trait'] + ", " + personality['pos_trait']
 
-                ### Response:""")
-        
-        elif output_type == "json":
+    print("player_hidden_pos_traits: " + str(game.player_hidden_pos_traits))
 
-            if function_req == "input_toState":
-                json_schema = textwrap.dedent("""{
-                    "type": "object",
-                    "properties": {
-                        "player_state": {
-                            "type": "array",
-                            "description": "a list containing the current location and goals as well as ALL player attributes, perks, conditions and characteristics.",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "key": {"type": "string"},
-                                    "value": {"type": "string"},
-                                    "description": {"type": "string"}
-                                }
-                            }
-                        },
-                        "player_holdings": {
-                            "type": "array",
-                            "description": "a list of all finances, assets and debts OWNED by the player and their values",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "key": {"type": "string"},
-                                    "value": {"type": "string"},
-                                    "description": {"type": "string"}
-                                }
-                            }
-                        },
-                        "player_relations": {
-                            "type": "array",
-                            "description": "a list describing all RELATIONSHIPS between the player and other agents (e.g. individuals, factions, groups) in the world)",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "key": {"type": "string"},
-                                    "value": {"type": "string"},
-                                    "description": {"type": "string"}
-                                }
-                            }
-                        },
-                        "world_state": {
-                            "type": "array",
-                            "description": "a list describing the state of the world that is meaningful to the player",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "key": {"type": "string"},
-                                    "value": {"type": "string"},
-                                    "description": {"type": "string"}
-                                }
-                            }
-                        },
-                        "meta": {
-                            "type": "object",
-                            "description": "a holistic analysis of the game state (player_holdings, player_relations, player_state, world_state, storyline)",
-                            "properties": {
-                                "state_complexity": {"type": "string"},
-                                "state_significance": {"type": "string"},
-                                "narrative_urgency": {"type": "string"}
-                            }
-                        }
-                    }
-                }""")
+    game.player_dominance = dominance
+    game.player_influence = influence
+    game.player_insight = insight
 
-                context = textwrap.dedent("""
-                ### Input:
-                You are an expert scenario and game state custodian. Your task is to transform narratives into a structured game state dictionary and knowledge base in JSON format. This game state will inform a player narrative for a grand strategy game.                                          
-                                                                                                    
-                Consider the following output example:
-                                          
-                {
-                    "player_state": [
-                        {"key": "Name", "value": "Jorrit Velzeboer", "description": "Your full name"},
-                        {"key": "Location", "value": "At the village", "description": "Your current location"},
-                        {"key": "Dream", "value": "Become a great adventurer", "description": "Your lifelong goal"},
-                        {"key": "Achievement", "value": "Discovered the lost city and its treasures", "description": "Your major accomplishments"}
-                    ],
-                    "player_holdings": [
-                        {"key": "Food", "value": "Essential for the journey", "description": "Your nourishment"},
-                        {"key": "Compass", "value": "To stay oriented", "description": "Your tool for navigation"},
-                        {"key": "Treasures", "value": "Gold, jewels, and other precious items found in the hidden cave", "description": "Your collected valuables"}
-                    ],
-                    "player_relations": [
-                        {"key": "Villagers", "value": "50", "description": "Your standing with the local villagers"},
-                        {"key": "Villagers.Opinion", "value": "Skeptical of Jack's journey", "description": "The villagers' opinion of you"},
-                        {"key": "Rival treasure hunters", "value": "They are nearby, also searching for the lost city and its treasures", "description": "Others who are after the same goals as you"}
-                    ],
-                    "world_state": [
-                        {"key": "Jungle", "value": "The jungle is 1km from the village", "description": "A treacherous area you must navigate"},
-                        {"key": "Ancient Temple", "value": "The temple is in the jungle", "description": "An ancient site you can explore"},
-                        {"key": "Hidden Cave", "value": "The cave is in the jungle", "description": "A perilous location you must face"}
-                    ],
-                    "meta": {
-                        "state_complexity": "Your journey into the unknown jungle in search of the legendary lost city and its treasures, encountering dangerous animals, rival treasure hunters, and navigating ancient structures.",
-                        "state_significance": "Your discovery of the lost city and its treasures, proving your bravery and turning you into a legendary adventurer in your village.",
-                        "narrative_urgency": "Your overcoming of the treacherous paths, defeating the dragon guarding the treasures, and returning home with the bounty to earn respect and recognition."
-                    }
-                }
-                                          
-                The output JSON has five main DICTIONARY categories:
+    modifier = random.uniform(0.9500, 1.0500)
 
-                'player_state': 
-                INCLUDES characteristics, conditions, and intrinsic traits of the player.
-                DOES NOT INCLUDE any tangible assets, resources, or finances, or relationships with other entities.
-                
-                'player_holdings': 
-                INCLUDES tangible assets, resources, and finances of the player.
-                DOES NOT INCLUDE any characteristics, conditions, or intrinsic traits of the player, or relationships with other entities.
-                
-                'player_relations': 
-                INCLUDES relationships and interactions of the player with other entities.
-                DOES NOT INCLUDE any characteristics, conditions, or intrinsic traits, tangible assets, resources, or finances of the player.
-                
-                'world_state': 
-                INCLUDES global events and elements that impact the player.
-                DOES NOT INCLUDE any characteristics, conditions, or intrinsic traits, tangible assets, resources, or finances of the player, or relationships with other entities.
-                
-                'meta': 
-                A holistic analysis of the game state (player_holdings, player_relations, player_state, world_state, storyline).
-                          
-                Consider the following narrative:
-                                          
-                """+user_input+"""
+    game.player_worldview = worldview['name'] + ": " + worldview['description']
+    game.player_s_class = s_class['name'] + ": " + s_class['description']
+    game.player_personality = personality['name'] + ": " + personality['description']
 
-                ### Instruction:
+    print(personality)
 
-                Follow the steps and guidelines below to ensure accuracy and completeness:
+    print("player_worldview: " + str(game.player_worldview))
+    print("player_s_class: " + str(game.player_s_class))
+    print("player_personality: " + str(game.player_personality))
 
-                DISTILL the facts from the analysis and narrative into the DICTIONARY categories:
-                - List all intrinsic traits, interests, passions, personality aspects, perks, and conditions characterizing the player in 'player_state'. Must include at least the player's name, current location, and goals. Example (do not use in output): "key": "Name", "value": "Susan", "description": "Your name"
-                - List all tangible assets, real estate, companies, resources, or finances owned by the player in 'player_holdings'. Quantify them where possible. Example (do not use in output): "key": "Money", "value": "5000", "description": "Amount of money owned by you"
-                - List all agents (e.g., individuals, factions, groups) with whom the player has some kind of relationship in 'player_relations'. Quantify the relationship where possible. Example (do not use in output): "key": "Town Guard", "value": "70", "description": "Your standing with the town guard"
-                - List all pertinent facts and events about the world that have implications for the player in 'world_state'. If information is not explicitly mentioned, hypothesize based on available data. Example (do not use in output): "key": "Political Climate", "value": "Unstable", "description": "The political climate of the world"
+    game.player_wealth = round(800*(2^wealth)*modifier)
+    game.player_debt = round(800*(2^debt)*modifier)
 
-                DISTILL the gamestate complexity, gamestate significance and narrative urgency:
-                - Explicitly note the challenges faced by the player in 'state_complexity'. If not explicitly mentioned, hypothesize on possible challenges.
-                - Identify the factors giving significance to the player's actions in 'state_significance'. If not explicitly mentioned, hypothesize on possible significances.
-                - Point out matters needing immediate attention from the player in 'narrative_urgency'. If not explicitly mentioned, state as "N/A".
+    socketio.emit('update_statmenu', {'dominance': game.player_dominance, 'influence': game.player_influence, 'insight': game.player_insight, 'wealth': str(game.player_wealth)+" fl.", 'debt': str(game.player_debt)+" fl."})
 
-                FOLLOW THESE GUIDELINES (failure to follow will result in a failed submission): 
-                - NEVER USE THE EXAMPLES PROVIDED! Derrive content only from the narrative and analysis.
-                - In case of conflicting information between the story and the analysis, the story is always considered more accurate.
-                - If information is not explicitly mentioned or cannot be accurately hypothesized, label it as "N/A."
-                - Specificity and relevance to the player are PARAMOUNT and should be prioritized over creativity. E.g. "The player is location {x/}" is more specific and relevant than "The player is in the world".
-                - The 'description' field should be a short description of the 'key' field WRITTEN IN THE SECOND PERSPECTIVE. E.g. "Your name" or "Your current location" or "Your goal".
-                - A perk, condition or characteristic is NEVER OWNED by the player and NEVER DESCRIBES A RELATIONSHIP, so put it in 'Player state'.
-                - An asset, company, debt, loan, house, resource or anything the player owns NEVER DESCRIBES A RELATIONSHIP and is NEVER A CONDITION OR PERK CHARACTERIZING the player, so put it in 'Player holdings'.
-                - A relationship (including descriptive terms such as "Ally", "Wife", "Enemy", "Relationship", "Alliance") is NEVER OWNED by the player and is NEVER A CONDITION CHARACTERIZING the player, so put it in 'Player relationships'.
+          
+def launch_game_ui(game):
+    ticker_template = render_template(
+    'ticker.html', 
+    time = game.datetime.strftime('%H:%M'),
+    date = game.datetime.strftime('%d.%m'),
+    year = game.datetime.strftime('%Y AD')
+    )
+    socketio.emit('blank_canvas', {'new_html_content': ticker_template})
 
-                ### Response:""")
+def change_state(next_state, game, accepted_proposal: Dict):
+    game.state = next_state
+    next_state.transition(game, accepted_proposal)
 
-            elif function_req == "json_toStory":
-                json_schema = textwrap.dedent("""{
-                    "type": "array",
-                    "description": "the missions you (=the player) are facing (always write in the second perspective)",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "title": {"type": "string"},
-                            "narrative": {"type": "string"},
-                            "closure_conditions": {"type": "string"}
-                        }
-                    }}""")
-            
-                context = textwrap.dedent("""
-                ### Input:
-                You are an expert quest/scenario writer for grand strategy games. You are tasked with generating a player quest in JSON format that is consistent with the current gamestate. The player quest will be used to generate a player narrative for a grand strategy game.
+# Using partial to encapsulate the argument (game)
+async def start_ticker(game, speed):
+    try:
+        if game.ticker:
+                game.ticker.cancel()
+        game.ticker = asyncio.create_task(tick(game, speed))
+        await game.ticker  # Await the new task
+    except (asyncio.exceptions.CancelledError):
+        pass
 
-                Consider the following example array of quests (just a guideline to help you understand the format):
-                [
-                        {
-                            "title": "The Brave Adventurer",
-                            "narrative": "You dream of becoming a legendary adventurer and you can't ignore the calling any longer. With a heart full of determination, you embark on a perilous journey into the dense jungle. The whispers of a fabled lost city entice your adventurous spirit. Challenges await you at every turn—from dangerous wildlife lurking in the shadows to rival treasure hunters eager to claim the glory for themselves. Undeterred, you push forward. Your eyes are set on the prize, your will unbreakable.",
-                            "closure_conditions": "You finally discover the legendary lost city and the treasures hidden within its ancient walls."
-                        },
-                        {
-                            "title": "Guardian of the Treasure",
-                            "narrative": "Deep within the heart of the jungle, you stumble upon a hidden cave. Your heart races as you sense the presence of something magnificent, and terrifying— a fierce dragon guards the entrance. To claim the treasures that lie within, you know you must summon every ounce of your courage and skill. It's a face-off between you and the mythical beast, a test of your mettle.",
-                            "closure_conditions": "You summon your courage and skills to defeat the dragon, gaining access to the priceless treasures guarded within the cave."
-                        },
-                        {
-                            "title": "Return of the Hero",
-                            "narrative": "With the treasures safely in your possession, you make your way back to your village. As you step through its gates, you're hailed as a hero. Your daring journey has turned you into an inspiration for all, your name becoming synonymous with bravery and exploration.",
-                            "closure_conditions": "You are recognized and celebrated by your villagers, your name forever etched as a symbol of courage and adventure."
-                        }
-                ]                 
+async def stop_ticker(game):
+    print("Stopping ticker")
+    if game.ticker:
+        try:
+                game.ticker.cancel()
+                await game.ticker
+        except:
+            game.ticker = None
+        socketio.emit('stop_time')
 
-                The following is the gamestate that you need to analyze:
-                                          
-                """+g.game_state_text+"""
+async def tick(game, speed):
+    tick_speed = 1 / math.pow(speed,0.75)
+    while True:
+        await asyncio.sleep(tick_speed)
+        await update_time(game, speed)
 
-                ### Instruction:
-                Here are some specific guidelines you must follow:
-                0. Understand the gamestate fully, specifically the player's current location and goals, player attributes, perks, conditions and characteristics, player holdings, player relationships, and world context.
-                1. Generate quests that are warranted by the state complexity, state significance and narrative urgency. 
-                2. ALWAYS write quests in the SECOND perspective - as if written for the player. E.g. "You have.." or "You are.." or "You need to.." or "Your x.." or "You are facing..".
-                2. NEVER use the example storylines or information/concepts from the example JSON above. Be be creative and think outside the box.
+async def update_time(game, speed):
+    modifier = max(round(speed / 15.13,2),3) - 2
+    modifier = math.pow(modifier,3)
+    game.datetime += timedelta(minutes=modifier)
+    game.time_status = check_datetime(game.datetime)
 
-                ### Response:""")
-                print(json_schema)
-            
+    time = game.datetime.strftime('%H:%M')
+    date = game.datetime.strftime('%d.%m')
+    year = game.datetime.strftime('%Y AD')
 
-        if len(context) > 0:
-            print(context)
-            asyncio.run(send_response_to_frontend(context,output_type,json_schema,function_req))
-        
-    return render_template('event.html')
+    if (game.triggerdate <= game.datetime):
+        mission_event_template = render_template(
+        'mission_event.html', 
+        name=game.player_name,
+        event=game.next_event
+        )
+        socketio.emit('drop_event', {'new_html_content': mission_event_template, 'actions': game.next_event['actions']})
+        game.triggerdate = datetime.strptime('1922-01-01 19:20:00', '%Y-%m-%d %H:%M:%S')
+        game.player_location = game.next_event['location']
+        proposal = {
+            'action': 'change_speed',
+            'speed': float(0.0)
+        }
+        game.present(proposal)
 
-async def send_response_to_frontend(prompt,output_type,json_schema,function_req):
 
-    async for response in get_api_response(prompt,output_type,json_schema):
-        if(function_req == "input_toStateAnalysis"):
-            socketio.emit('message_debug', {'data': response})
-        if(function_req == "json_toStory"):
-            socketio.emit('message_story', {'data': response})
-        elif(function_req == "input_toState"):
-            socketio.emit('message_state', {'data': response})
+    socketio.emit('update_time', {'time': time, 'date': date, 'year': year})
+
+# FETCH RESPONSE OOGABOOGA
+
+async def get_ws_result(prompt, json_schema=None, emit_progress=0):
+    result = await gen_ws_result(prompt, json_schema,emit_progress)
+    return result
+    
+async def gen_ws_result(prompt,json_schema, emit_progress):
+    result = ""
+    async for response in get_ws_response(prompt,json_schema):
+        if(response == "stream_end"):
+            print("stream_end")
+            return result
+        result += response
+        if (emit_progress!=0):
+            result_length = len(result)
+            progress = round(result_length / emit_progress * 100,0)
+            socketio.emit('update_progress', {'progress': progress})
         print(response, end='')
         sys.stdout.flush()  # If we don't flush, we won't see tokens in realtime.
 
-async def get_api_response(context,output_type,json_schema):
+async def get_ws_response(prompt,json_schema):
+    request = build_request(prompt,json_schema)
+    try:
+        async with websockets.connect(URI_WS, ping_interval=None) as websocket:
+            await websocket.send(json.dumps(request))
+
+            while True:
+                incoming_data = await websocket.recv()
+                incoming_data = json.loads(incoming_data)
+
+                match incoming_data['event']:
+                    case 'text_stream':
+                        yield incoming_data['text']
+                    case 'stream_end':
+                        yield "stream_end"
+                        return
+    except websockets.exceptions.ConnectionClosedError as e:
+        print(f"WebSocket connection error: {e}")
+        # Handle the error or re-raise it to inform the caller
+        # For now, we'll just return an empty list to indicate no data
+
+def build_request(prompt,json_schema):
     request = {
-        'prompt': context,
-        'output_type': output_type,
+        'prompt': prompt,
         'json_schema': json_schema,
-        'max_new_tokens': 1000,
+        'max_new_tokens': 3000,
         'auto_max_new_tokens': False,
         'max_tokens_second': 0,
         # Generation params. If 'preset' is set to different than 'None', the values
         # in presets/preset-name.yaml are used instead of the individual numbers.
         'preset': 'None',
         'do_sample': True,
-        'temperature': 0.98,
+        'temperature': 1.2,
         'top_p': 0.37,
         'typical_p': 1,
         'epsilon_cutoff': 0,  # In units of 1e-4
@@ -335,20 +288,706 @@ async def get_api_response(context,output_type,json_schema):
         'skip_special_tokens': True,
         'stopping_strings': []
     }
-    try:
-        async with websockets.connect(URI, ping_interval=None) as websocket:
-            await websocket.send(json.dumps(request))
+    return request
 
-            while True:
-                incoming_data = await websocket.recv()
-                incoming_data = json.loads(incoming_data)
+def compute_event_response(game, accepted_proposal: Dict):
 
-                match incoming_data['event']:
-                    case 'text_stream':
-                        yield incoming_data['text']
-                    case 'stream_end':
-                        return
-    except websockets.exceptions.ConnectionClosedError as e:
-        print(f"WebSocket connection error: {e}")
-        # Handle the error or re-raise it to inform the caller
-        # For now, we'll just return an empty list to indicate no data
+    event = game.next_event
+
+    print(event)
+
+    event.pop('actions')
+    event['executed_action'] = accepted_proposal['executed_action']
+    event['date'] = game.datetime
+
+    game.player_journal.append(event)
+
+    json_schema = textwrap.dedent("""{
+    "type": "object",
+    "properties": {
+        "action_analysis": {
+            "type": "string",
+            "description": "A brief analysis of the action, outlining the potential risks and rewards."
+        },
+        "likelihood_positive_outcome": {
+            "type": "number",
+            "description": "A numerical representation (percentage) of the likelihood of a positive outcome."
+        },
+        "critical_positive_outcome": {
+            "type": "object",
+            "properties": {
+                "player_message": {
+                    "type": "string",
+                    "description": "A message to the player describing a critical positive outcome."
+                },
+                "requires_urgent_player_actions": {
+                    "type": "boolean",
+                    "description": "Indicates whether further player actions are required."
+                }
+            }
+        },
+        "positive_outcome": {
+            "type": "object",
+            "properties": {
+                "player_message": {
+                    "type": "string",
+                    "description": "A message to the player describing a positive outcome."
+                },
+                "requires_urgent_player_actions": {
+                    "type": "boolean",
+                    "description": "Indicates whether further player actions are required."
+                }
+            }
+        },
+        "negative_outcome": {
+            "type": "object",
+            "properties": {
+                "player_message": {
+                    "type": "string",
+                    "description": "A message to the player describing a negative outcome."
+                },
+                "requires_urgent_player_actions": {
+                    "type": "boolean",
+                    "description": "Indicates whether further player actions are required."
+                }
+            }
+        },
+        "critical_negative_outcome": {
+            "type": "object",
+            "properties": {
+                "player_message": {
+                    "type": "string",
+                    "description": "A message to the player describing a critical negative outcome."
+                },
+                "requires_urgent_player_actions": {
+                    "type": "boolean",
+                    "description": "Indicates whether further player actions are required."
+                }
+            }
+        }
+    }
+}""")
+    
+    prompt = generate_action_analysis(game)
+    print("generating event")
+    result_analysis = asyncio.run(get_ws_result(prompt, json_schema))
+
+    result_analysis = json.loads(result_analysis)
+    odds = float(result_analysis['likelihood_positive_outcome'])/100
+    negative_odds = 1 - odds
+
+    critical_negative_odds = negative_odds * 0.2
+    positive_odds = odds * 0.8 + negative_odds
+
+    random_value = random.uniform(0, 1)
+
+    if (random_value < critical_negative_odds):
+        result_analysis_outcome = result_analysis['critical_negative_outcome']
+    elif (random_value < negative_odds):
+        result_analysis_outcome = result_analysis['negative_outcome']
+    elif (random_value < positive_odds):
+        result_analysis_outcome = result_analysis['positive_outcome']
+    else:
+        result_analysis_outcome = result_analysis['critical_positive_outcome']
+
+    if (result_analysis_outcome['requires_urgent_player_actions']):
+        prompt = generate_event_response(game)
+        #result_response = asyncio.run(get_ws_result(prompt, json_schema))
+    else:
+        prompt = generate_mission_evaluation(game)
+
+    
+def generate_event_response(game):
+    print("generating event response")
+
+def generate_mission_evaluation(game):
+    print("generating mission evaluation")
+
+def generate_action_analysis(game):
+    date = game.player_journal[-1]['date']
+    time_of_day = check_datetime(date)
+    prompt = textwrap.dedent("""### Input:
+    You are an expert scenario analyst for grand strategy games. You are tasked with the analysis of a player's actions for a a mission in JSON format.
+    The theme of the game is the golden age of the renaissance, and the player is being tasked by a hidden society.
+
+    Consider the following EXAMPLE event (just a guideline to better parse the format -> so do not output this):{
+"action_analysis": "You stand at the crossroads of enlightenment. The shorter alleyway might lead you directly to the hidden society's meeting place, accelerating your journey into the secrets of the golden age. However, treacherous plots could ensnare and cause the loss of invaluable insights. This decision teeters between unveiling artful masterpieces or descending into obscurity.": 40,
+"critical_positive_outcome": {
+"player_message": "As the cobblestones echo gently beneath your steps, a burst of insight guides your way. You discover a concealed door leading directly to the society's chamber, where luminous paintings and golden relics glow under the soft candlelight. Relief and awe surge within you, realizing the vast knowledge now accessible, the wisdom of the golden age at your fingertips.",
+"requires_urgent_player_actions": false
+},
+"positive_outcome": {
+"player_message": "You tread with discernment, navigating the alleyways of the bustling city. The walls murmur tales of ancient guilds and ingenious craftsmen. Finally, you emerge closer to the heart of the hidden society, the candlelit glow of their secrets casting a gentle shadow on the brick facades.",
+"requires_urgent_player_actions": false
+},
+"negative_outcome": {
+"player_message": "The intricate streets of the city confound your direction. Despite your attempts, you find yourself ensnared in a web of deceit and misinformation. Moments turn to hours, and with dwindling clues, the society's hidden chamber seems more elusive. The pathway to understanding requires renewed vigor and focus.",
+"requires_urgent_player_actions": true
+},
+"critical_negative_outcome": {
+"player_message": "Dusk falls as you delve deeper into the city's maze. Unexpected conspiracies emerge, leading to significant loss of time and credibility. The once inviting tales of the golden age now echo with doubt and mistrust. The society's secrets grow fainter, as the city's complexities challenge your determination, demanding sharp wit and perseverance.",
+"requires_urgent_player_actions": true
+}
+}"""+f""" 
+
+    !!!DO NOT USE THE ABOVE EXAMPLE!!!
+
+    The following is the gamestate that you may need to analyze this event:
+                                
+    Player state:
+    Your name: {game.player_name}
+    Your location: {game.player_location}
+    Your age: {game.player_age}
+    Your occupation: {game.player_occupation}
+    Your perks: {game.player_perks}
+    Your holdings: {game.player_holdings}
+    Your relations: {game.relations_background}
+
+    The mission the player is on:
+    {game.mission}
+
+    The event that the player received:
+    {game.player_journal[-1]['event_body']}
+
+    How the player responded to the event:
+    {game.player_journal[-1]['executed_action']['action']}
+
+    Possible success effect:
+    {game.player_journal[-1]['executed_action']['Possible success effect']}
+
+    Possible failure effect:
+    {game.player_journal[-1]['executed_action']['Possible failure effect']}
+
+    Relevant gamestate pointers you can use to determine the outcome:
+    {game.player_journal[-1]['relevant_gamestate_pointers']}
+
+    The time and date of the event:
+    {game.player_journal[-1]['date']}
+
+    The time of day:
+    {time_of_day}
+                         
+    ### Instruction:
+    Here are some specific guidelines you must follow:
+    1. Understand the the player's current location and mission, player attributes, perks, conditions and characteristics, player holdings, gear and assets, player relationships.
+    2. Generate an analysis of the chosen player action that is based on the player's current state, including their relevant characteristics, the action they picked, the time of day and and the event itself.
+    3. The response must include the likelihood of a positive outcome, the effect of the action on the player, and whether the action requires further player actions.
+    6. ALWAYS write in the SECOND perspective - as if written for the player. E.g. "You have.." or "You are.." or "You need to.." or "Your x.." or "You are facing..".
+    7. NEVER use the example event from the example JSON above. Be be creative and think outside the box.
+
+    ### Response:""")
+
+    return prompt
+
+def compute_next_event(game, accepted_proposal: Dict):
+    game.mission = accepted_proposal['mission']
+    json_schema = textwrap.dedent("""{
+    "type": "object",
+    "description": "an event the player may receive in their mission,
+    "properties": {
+        "title": {"type": "string"},
+        "location": {"type": "string"},
+        "event_body": {"type": "string"},
+        "relevant_gamestate_pointers": {
+            "type": "array",
+            "items": {"type": "string"}
+            },
+        "trigger_conditionals": {
+            "type": "object",
+            "properties": {
+                "must_trigger_now": {"type": "boolean"},
+                "can_trigger_now": {"type": "boolean"},
+                "must_trigger_today": {"type": "boolean"},
+                "can_trigger_today": {"type": "boolean"},
+                "must_trigger_tomorrow": {"type": "boolean"},
+                "can_trigger_tomorrow": {"type": "boolean"},
+                "must_trigger_this_week": {"type": "boolean"},
+                "can_trigger_this_week": {"type": "boolean"},
+                "must_trigger_in_morning": {"type": "boolean"},
+                "can_trigger_in_morning": {"type": "boolean"},
+                "must_trigger_in_afternoon": {"type": "boolean"},
+                "can_trigger_in_afternoon": {"type": "boolean"},
+                "must_trigger_in_evening": {"type": "boolean"},
+                "can_trigger_in_evening": {"type": "boolean"},
+                "must_trigger_at_night": {"type": "boolean"},
+                "can_trigger_at_night": {"type": "boolean"}
+            }
+        },
+        "actions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string"},
+                    "Possible success effect": {"type": "string"},
+                    "Possible failure effect": {"type": "string"}
+                }
+            }
+        }                          
+    }
+}""")
+    if (Config.SKIP_GEN_EVENT):
+        result = Config.SKIP_VAL2
+    else:
+        print("generating event")
+        prompt = generate_event(game)
+        result = asyncio.run(get_ws_result(prompt, json_schema))
+    event = json.loads(result)
+
+
+
+    # parse trigger conditionals into a better format
+
+    trigger_conditionals = event['trigger_conditionals']
+    event.pop('trigger_conditionals')
+
+    # extract data starting with 'must_trigger' into array
+    must_trigger = {k: v for k, v in trigger_conditionals.items() if k.startswith('must_trigger')}
+
+    must_time = retrieve_must_time(must_trigger)
+    must_date = retrieve_must_date(must_trigger)
+    
+    # extract data starting with 'can_trigger'
+    can_trigger = {k: v for k, v in trigger_conditionals.items() if k.startswith('can_trigger')}
+    print(can_trigger)
+
+    can_time_array = retrieve_can_time_array(can_trigger)
+    can_date_array = retrieve_can_date_array(can_trigger)
+
+    weights = [2,4,2,1]
+
+    if len(weights) > len(can_time_array):
+        weights = weights[:len(can_time_array)]
+    elif len(weights) < len(can_time_array):
+        weights.extend([1] * (len(can_time_array) - len(weights)))
+
+    if (must_time==False):
+        est_time = random.choices(can_time_array, weights=weights, k=1)[0]
+    else:
+        est_time = must_time  
+
+    weights = [1,2,2,8]   
+    
+    if len(weights) > len(can_date_array):
+        weights = weights[:len(can_date_array)]
+    elif len(weights) < len(can_date_array):
+        weights.extend([1] * (len(can_date_array) - len(weights)))
+
+    if (must_date==False):
+        est_date = random.choices(can_date_array, weights=weights, k=1)[0]
+    else:
+        est_date = must_date
+
+    game.next_event = event
+    game.triggerdate = get_trigger_datetime(game,est_date, est_time, can_time_array)
+    print(game.triggerdate)
+
+    # Send the result to the client
+    print("proceeding")
+    proposal = {
+    'action': 'wait_for_input'
+    }
+    game.present(proposal)
+
+def retrieve_can_time_array(can_trigger):
+    possible_times = []
+    if (can_trigger['can_trigger_in_morning']):
+        possible_times.append('morning')
+    if (can_trigger['can_trigger_in_afternoon']):
+        possible_times.append('afternoon')
+    if (can_trigger['can_trigger_in_evening']):
+        possible_times.append('evening')
+    if (can_trigger['can_trigger_at_night']):
+        possible_times.append('night')
+    return possible_times
+    
+def retrieve_can_date_array(can_trigger):
+    possible_dates = []
+    if (can_trigger['can_trigger_now']):
+        possible_dates.append('now')
+    if (can_trigger['can_trigger_today']):
+        possible_dates.append('today')
+    if (can_trigger['can_trigger_tomorrow']):
+        possible_dates.append('tomorrow')
+    if (can_trigger['can_trigger_this_week']):
+        possible_dates.append('this_week')
+    return possible_dates
+
+def retrieve_must_time(must_trigger):
+    if (must_trigger['must_trigger_in_morning']):
+        return 'morning'
+    if (must_trigger['must_trigger_in_afternoon']):
+        return 'afternoon'
+    if (must_trigger['must_trigger_in_evening']):
+        return 'evening'
+    if (must_trigger['must_trigger_at_night']):
+        return 'night'
+    else:
+        return False
+    
+def retrieve_must_date(must_trigger):
+    if (must_trigger['must_trigger_now']):
+        return 'now'
+    if (must_trigger['must_trigger_today']):
+        return 'today'
+    if (must_trigger['must_trigger_tomorrow']):
+        return 'tomorrow'
+    if (must_trigger['must_trigger_this_week']):
+        return 'this_week'
+    else:
+        return False   
+    
+def check_datetime(dt):   
+    # Check the time
+    hour = dt.time().hour  # get the hour as an integer
+    if 6 <= hour < 12:
+        time_status = 'morning'
+    elif 12 <= hour < 18:
+        time_status = 'afternoon'
+    elif 18 <= hour < 24:
+        time_status = 'evening'
+    else:
+        time_status = 'night'
+    
+    return time_status
+
+def get_random_time(time_status):
+    # Handling time
+    if time_status == 'morning':
+        hour = random.randint(6, 11)
+    elif time_status == 'afternoon':
+        hour = random.randint(12, 17)
+    elif time_status == 'evening':
+        hour = random.randint(18, 23)
+    elif time_status == 'night':
+        hour = random.randint(0, 5)
+    else:
+        raise ValueError("Invalid time_status")
+
+    minute = random.randint(0, 59)
+    return time(hour, minute)
+
+def get_trigger_datetime(game,date_status, time_status, can_time_array):
+
+    timesequence = ['morning','afternoon','evening','night']
+    # get index for each item in can_time_array from timesequence
+    possible_time_indices = [timesequence.index(i) for i in can_time_array]
+
+    print(date_status)
+    # get index for the current game time status
+    game_time_status_index = timesequence.index(game.time_status)
+
+    # remaining time slots in the day (get all indices that are greater or equal than the current game time status)
+    remaining_time_slots = [i for i in possible_time_indices if i >= game_time_status_index]
+
+     # If in the same part of the day, add a random amount of minutes to triggerdate
+
+    if (date_status == 'now'):
+        if (game.time_status in can_time_array):
+            time = (game.datetime + timedelta(minutes=random.randint(1, 7))).time()
+            date = game.datetime.date()
+        elif (remaining_time_slots != []):
+            next_time_today = timesequence[min(remaining_time_slots)]
+            time = get_random_time(next_time_today)
+            date = game.datetime.date()
+        else:
+            date_status = 'today'
+    
+    if date_status == 'today':
+        if time_status == game.time_status:
+            time = (game.datetime + timedelta(minutes=random.randint(1, 119))).time()
+            date = game.datetime.date()
+        elif time_status in remaining_time_slots:
+            time = get_random_time(time_status)
+            date = game.datetime.date()
+        elif (remaining_time_slots != []):
+            time = get_random_time(timesequence[random.choice(remaining_time_slots)])
+            date = game.datetime.date()
+        else:
+            date_status = 'tomorrow'
+    
+    if date_status == 'tomorrow':
+        time = get_random_time(time_status)
+        date = (game.datetime + timedelta(days=1)).date()
+
+    if date_status == 'this_week':
+        time = get_random_time(time_status)
+        date = (game.datetime + timedelta(days=random.randint(2, 7))).date()
+    
+    # Combine date and time
+    trigger_datetime = datetime.combine(date, time)
+    
+    return trigger_datetime
+
+def generate_event(game):
+    prompt = ""
+    player_perks = ', '.join([str(game.player_perks[i]) for i in range(len(game.player_perks))])
+    player_holdings = ', '.join([str(game.player_holdings[i]) for i in range(len(game.player_holdings))])
+    player_places = ', '.join([str(game.player_places[i]) for i in range(len(game.player_places))])
+
+    prompt = textwrap.dedent("""### Input:
+    You are an expert event writer for grand strategy games. You are tasked with generating a player event for a a mission in JSON format that is consistent with the current gamestate.
+    The theme of the game is the golden age of the renaissance, and the player is being tasked by a hidden society.
+
+    Consider the following example event (just a guideline to help you understand the format):{
+"properties": {
+"title": "The Whispering Library",
+"location": "In a hidden corridor within the city",
+"event_body": "As you navigate the bustling streets of the renaissance city, you stumble upon a concealed library. Whispers of ancient tales and hidden knowledge beckon you closer. Manuscripts suggest this place may reveal secrets of the hidden society, but muffled voices behind ornate bookshelves hint at clandestine plots and dangers.",
+"relevant_gamestate_pointers": [
+"intellect",
+"historical knowledge"
+],
+"trigger_conditionals": {
+"must_trigger_now": false,
+"can_trigger_now": true,
+"must_trigger_today": false,
+"can_trigger_today": true,
+"must_trigger_tomorrow": false,
+"can_trigger_tomorrow": false,
+"must_trigger_this_week": false,
+"can_trigger_this_week": true,
+"must_trigger_in_morning": false,
+"can_trigger_in_morning": true,
+"must_trigger_in_afternoon": false,
+"can_trigger_in_afternoon": true,
+"must_trigger_in_evening": false,
+"can_trigger_in_evening": true,
+"must_trigger_at_night": false,
+"can_trigger_at_night": true
+},
+"actions": [
+{
+"action": "Dive into the ancient manuscripts",
+"Possible success effect": "Unearth valuable insights about the hidden society, advancing you closer to its heart.",
+"Possible failure effect": "Misinterpret the texts, leading you further away from the true knowledge and potential confrontation with those who guard it."
+},
+{
+"action": "Heed the whispers and discreetly exit",
+"Possible success effect": "Evade the lurking dangers of the library, discovering another clue outside that aids your search.",
+"Possible failure effect": "Miss out on critical information within the library, making your quest for the society even more challenging."
+},
+{
+"action": "Use a cipher from your belongings to decipher coded messages",
+"Possible success effect": "Decode secrets that reveal the society's next meeting, granting you a golden opportunity to infiltrate.",
+"Possible failure effect": "Misunderstand the cipher, attracting unwanted attention and potential threats."
+}
+]
+}
+}"""+f"""                 
+
+    The following is the gamestate that you need to craft your event:
+
+    #World state:
+    Your journal: {game.player_journal}
+    State complexity: 
+    {game.complexity}
+    State significance: 
+    {game.significance}
+
+    #Your PII:
+    Your name: {game.player_name}
+    Your age: {game.player_age}
+    Your occupation: {game.player_occupation}
+    Your location: {game.player_location}
+    
+    #Your holdings:
+    Your wealth (in florins): {game.player_wealth}
+    Your debt (in florins): {game.player_debt}
+    Your possessions: {player_holdings}
+
+    #Your relationships:
+    Your significant people & places: {player_places}
+    Your relationships described in more detail: {game.relations_background}
+
+    #Your characteristics:
+    Your worldview: {game.player_worldview}
+    Your social class: {game.player_s_class}
+    Your personality: {game.player_personality}
+    Your other traits / perks: {player_perks}
+
+    #Your backstory:
+    Your origin: {game.world_background}
+    Your lifestyle: {game.player_lifestyle}
+
+    And most importantly the current mission you are on:
+    {game.mission}
+                         
+    ### Instruction:
+    Here are some specific guidelines you must follow:
+    1. Understand the gamestate fully and generate an event that is consistent with the current gamestate.
+    2. Generate an event that is primarily warranted by the mission, state complexity and narrative urgency.
+    3. Decide on the scope of the trigger (triggerscope). Opt for short triggerscope if the event is urgent and long triggerscope if the event is not urgent.
+    6. ALWAYS write in the SECOND perspective - as if written for the player. E.g. "You have.." or "You are.." or "You need to.." or "Your x.." or "You are facing..".
+    7. NEVER use the example event from the example JSON above. Be be creative and think outside the box.
+
+    ### Response:""")
+
+    print(prompt)
+    return prompt
+    
+def compute_mission_selection(game, accepted_proposal: Dict):
+    game.player_name = accepted_proposal['player_state']['name']
+    game.player_age = accepted_proposal['player_state']['age']
+    game.player_occupation = accepted_proposal['player_state']['occupation']
+    game.player_places = accepted_proposal['player_relations']['places']
+    game.player_perks = accepted_proposal['player_state']['perks']
+    game.player_holdings = accepted_proposal['player_holdings']
+    game.relations_background = accepted_proposal['player_relations']['background']
+    game.player_lifestyle = accepted_proposal['world_state']['lifestyle']
+    game.world_background = accepted_proposal['world_state']['background']
+    game_loader_template = render_template(
+    'game_loader.html', 
+    name=game.player_name
+    )
+
+    # Prepare HTML content and send to the client
+    socketio.emit('message_story_init', {'new_html_content': game_loader_template})
+
+    json_schema = textwrap.dedent("""{
+    "type": "object",
+    "properties": {
+        "state_complexity": {"type": "string"},
+        "state_significance": {"type": "string"},
+        "missions": {
+            "type": "object",
+            "description": "The missions you (=the player) are facing (always write in the second perspective)",
+            "properties": {
+                "mission_1": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "narrative": {"type": "string"},
+                        "closure_conditions": {"type": "string"}
+                    }
+                },
+                "mission_2": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "narrative": {"type": "string"},
+                        "closure_conditions": {"type": "string"}
+                    }
+                },
+                "mission_3": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "narrative": {"type": "string"},
+                        "closure_conditions": {"type": "string"}
+                    }
+                }
+            }
+        }
+    }
+}""")
+
+
+    if (Config.SKIP_GEN_MISSION):
+        result = Config.SKIP_VAL1
+    else:
+        prompt = generate_mission(game)
+
+        # Run the async function in a new event loop
+        result = asyncio.run(get_ws_result(prompt, json_schema, emit_progress=1750))
+    result = json.loads(result)    
+
+    # Extract the missions object and convert it to an array
+    missions_array = [value for key, value in result['missions'].items()]
+
+    # Create a new JSON object with the original array-based structure
+    stories = {
+        "state_complexity": result['state_complexity'],
+        "state_significance": result['state_significance'],
+        "missions": missions_array
+    }
+
+    game.complexity = stories['state_complexity']
+    game.significance = stories['state_significance']
+
+    mission_picker_template = render_template(
+    'mission_picker.html', 
+    name=game.player_name,
+    stories=stories['missions']
+    )
+
+    socketio.emit('message_story', {'new_html_content': mission_picker_template, 'stories': stories['missions']})
+
+def generate_mission(game):
+
+    prompt = ""
+    player_perks = ', '.join([str(game.player_perks[i]) for i in range(len(game.player_perks))])
+    player_holdings = ', '.join([str(game.player_holdings[i]) for i in range(len(game.player_holdings))])
+    player_places = ', '.join([str(game.player_places[i]) for i in range(len(game.player_places))])
+
+    prompt = textwrap.dedent("""
+    ### Input:
+    You are an expert quest/scenario writer for grand strategy games. You are tasked with generating a player quest in JSON format that is consistent with the current gamestate.
+    The theme of the game is the golden age of the renaissance, and the player is being tasked by a hidden society.
+
+    Consider the following example array of missions (just a guideline to help you understand the format):
+    {
+    "state_complexity": "The player faces a paradox of choice between different life paths, each with its own set of challenges and moral dilemmas. Time is a complicating factor as certain opportunities may be fleeting.",
+    "state_significance": "An impending prophetic event and the village's increasing need for a hero, master chef, or guardian add urgency. The player's choices will have long-lasting effects on their influence and the village's future.",
+    "missions": {
+        "mission_1": {
+            "title": "The Brave Adventurer",
+            "narrative": "You dream of becoming a legendary adventurer and you can't ignore the calling any longer. With a heart full of determination, you embark on a perilous journey into the dense jungle. The whispers of a fabled lost city entice your adventurous spirit. Challenges await you at every turn—from dangerous wildlife lurking in the shadows to rival treasure hunters eager to claim the glory for themselves. Undeterred, you push forward. Your eyes are set on the prize, your will unbreakable.",
+            "closure_conditions": "You finally discover the legendary lost city and the treasures hidden within its ancient walls."
+        },
+        "mission_2": {
+            "title": "The Master Chef",
+            "narrative": "You've always had a knack for culinary arts. This time, you decide to take it up a notch by competing in a renowned international cooking competition. With every dash of spice and swirl of sauce, you express your soul. You're up against the best chefs in the world, each a maestro in their own right. The stakes are high and the pressure is on.",
+            "closure_conditions": "You not only win the competition, but your dish becomes the talk of the culinary world, setting a new standard in gastronomic excellence."
+        },
+        "mission_3": {
+            "title": "The Unseen Guardian",
+            "narrative": "Though you've always lived a humble life in your small village, you possess a rare gift—you can communicate with animals. When a natural disaster threatens the village, it's the animals who bring you the news. You don't hesitate. Rallying the creatures of the forest and field, you orchestrate a daring rescue operation.",
+            "closure_conditions": "Your heroism remains a secret, known only to the creatures you've saved, but the village survives, and so do you, the unseen guardian."
+        }
+    }
+}"""+f"""                 
+
+    The following is the gamestate that you need to analyze:
+                                
+    #World state:
+    Your journal: {game.player_journal}
+
+    #Your PII:
+    Your name: {game.player_name}
+    Your age: {game.player_age}
+    Your occupation: {game.player_occupation}
+    Your location: {game.player_location}
+    
+    #Your holdings:
+    Your wealth (in florins): {game.player_wealth}
+    Your debt (in florins): {game.player_debt}
+    Your possessions: {player_holdings}
+
+    #Your relationships:
+    Your significant people & places: {player_places}
+    Your relationships described in more detail: {game.relations_background}
+
+    #Your characteristics:
+    Your worldview: {game.player_worldview}
+    Your social class: {game.player_s_class}
+    Your personality: {game.player_personality}
+    Your other traits / perks: {player_perks}
+
+    #Your backstory:
+    Your origin: {game.world_background}
+    Your lifestyle: {game.player_lifestyle}
+
+    ### Instruction:
+    Here are some specific guidelines you must follow:
+    1. Understand the gamestate fully.
+    2. Distill challenges, paradoxes, urgent situations, significant event and complicated situations faced by the player in 'state_complexity' and 'state_significance'.
+    3. Generate THREE engaging missions that are preferably warranted by the state complexity and state significance.
+    5. Ensure that the generated missions BRANCH from the current gamestate and are NOT SEQUENTIAL TO EACH OTHER.
+    6. ALWAYS write missions in the SECOND perspective - as if written for the player. E.g. "You have.." or "You are.." or "You need to.." or "Your x.." or "You are facing..".
+    7. NEVER use the example storylines or information/concepts from the example JSON above. Be be creative and think outside the box.
+
+    ### Response:""")
+    
+    print(prompt)
+    return prompt

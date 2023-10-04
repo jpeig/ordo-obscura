@@ -19,14 +19,11 @@ def init_app():
 
     with app.app_context():
         # Include our Routes
-        from . import state, actions
-
-        # Set global variables
-        g.analysis_text = ""
-        g.game_state_text = ""
-        g.story_json = ""
+        from . import state, actions, models, routes
 
         # Register Blueprints
+        app.register_blueprint(routes.routes)
+        app.register_blueprint(models.models)
         app.register_blueprint(state.state)
         app.register_blueprint(actions.actions)
 

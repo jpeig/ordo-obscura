@@ -1,0 +1,20 @@
+{
+    "action_analysis": "High risk and high reward echo through your mind as you stand before the ancient grove. The dense, intertwined routes stretch ominously before you. Bypassing the lengthy and potentially safer route can catapult you directly to the lost city, offering a significant advantage in time. The air thickens with the scent of the unknown, and you feel the weight of the decision on your shoulders. Success could be monumental; failure, however, could lead to increased resource expenditure, lost time, and exposure to unknown perils lurking within the grove's shrouded depths.",
+    "likelihood_positive_outcome": 40,
+    "critical_positive_outcome": {
+        "Player message": "As the leaves crunch softly under your feet, a sense of intuition guides your path. You find a hidden path leading directly to the lost city, the towering spires visible through the clearing, bathed in the light of the sinking sun. Relief and exhilaration flood through you as you realize the extensive amount of time saved, the city's secrets now within arm's reach.",
+        "requires_urgent_player_actions": false
+    },
+    "positive_outcome": {
+        "Player message": "You embark upon the journey with caution, navigating through the shortcut with minimal issues. The flora whispers secrets of ancient times as you pass, and you emerge on the other side, saving some precious time. The city now draws nearer, its silhouette beckoning under the velvet sky.",
+        "requires_urgent_player_actions": false
+    },
+    "negative_outcome": {
+        "Player message": "The labyrinthine grove confounds your senses. Despite your best efforts, you find yourself lost within the entangled routes, each turn leading to more uncertainty. Time slips through your fingers like sand, as resources dwindle, the city’s allure now a distant beacon amidst the twisted boughs. The path forward remains shrouded, demanding further determination and resilience.",
+        "requires_urgent_player_actions": true
+    },
+    "critical_negative_outcome": {
+        "Player message": "Darkness descends like a shroud as you venture deeper into the grove. Unforeseen dangers ambush from the shadows, causing substantial loss of resources and time. The whispers of the ancient trees now sound like mocking echoes, as you grapple with the reality of the perilous journey. The elusive city fades into a distant dream, as the grove tightens its perilous embrace, demanding heightened resolve to navigate the encircling dangers.",
+        "requires_urgent_player_actions": true
+    }
+}

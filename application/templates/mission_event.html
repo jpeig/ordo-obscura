@@ -1,0 +1,28 @@
+<div class="modal-draggable obscura-card mdl-card mdl-shadow--2dp" id="mission-event">
+    <div class="header mdl-card__title">
+        <h2 class="mdl-card__title-text">{{event.title}}</h2>
+    </div>
+    <div class="mdl-card__content">
+        {{event.event_body}}
+    </div>
+    <div class="mdl-card__actions mdl-card--border">
+        {% for act in event.actions %}
+        <a id="action-{{ loop.index }}" class="action mdl-button mdl-button--colored mdl-js-button mdl-js-ripple-effect">
+            {{act.action}}
+        </a>
+        <!-- Simple Tooltip -->
+        <div class="mdl-tooltip" id="tooltip" data-mdl-for="action-{{ loop.index }}">
+            <b>On success: </b> {{act['Possible success effect']}}<br>
+            <b>On failure: </b> {{act['Possible failure effect']}}
+         </div>
+         {% endfor %}
+    </div>
+    <div class="mdl-card__menu">
+        <button id="share" class="mdl-button mdl-button--icon mdl-js-button mdl-js-ripple-effect">
+            <i class="material-icons">share</i>
+            <div class="mdl-tooltip" data-mdl-for="share">
+                share
+            </div>
+        </button>
+    </div>
+</div>

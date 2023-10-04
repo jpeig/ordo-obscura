@@ -1,0 +1,229 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="mdl-layout__content mdl-grid dashboard-container" id="event-container">
+
+    <div class="modal-draggable obscura-card obscura-card-wide mdl-card mdl-shadow--2dp" id="wizard">
+        <div class="header mdl-card__title">
+            <h2 class="mdl-card__title-text">Who are you?</h2>
+        </div>
+        <div class="mdl-card__supporting-text">
+            Hello, adventurer! Let's begin your journey.
+        </div>
+        <form class="mdl-card__content" id="storyForm" action="#">
+            
+            <!-- Your Name -->
+            <div id="fact-sheet">
+                <div class="mdl-textfield mdl-js-textfield mdl-textfield--floating-label">
+                    <input class="mdl-textfield__input" type="text" id="name" name="name">
+                    <label class="mdl-textfield__label" for="name">Character Name</label>
+                    <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generateName"><i
+                            class="material-icons">autorenew</i></button>
+                </div>
+                <!-- Your Age -->
+                <div class="mdl-textfield mdl-js-textfield mdl-textfield--floating-label">
+                    <input class="mdl-textfield__input" type="number" id="age" name="age">
+                    <label class="mdl-textfield__label" for="age">Character Age</label>
+                    <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generateAge"><i
+                            class="material-icons">autorenew</i></button>
+                </div>
+
+                <!-- Current Occupation -->
+                <div class="mdl-textfield mdl-js-textfield mdl-textfield--floating-label">
+                    <input class="mdl-textfield__input" type="text" id="occupation" name="occupation">
+                    <label class="mdl-textfield__label" for="occupation">Character Occupation</label>
+                    <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generateOccupation"><i
+                            class="material-icons">autorenew</i></button>
+                </div>
+            </div>
+
+            <div id="story-sheet">
+                <!-- Your Backstory -->
+                <div id="storyContainer" class="story-sheet-container">
+
+                    <div id="worldview_input" class="mdl-textfield mdl-js-textfield mdl-textfield--floating-label getmdl-select getmdl-select__fix-height">
+                        <input type="text" value="" class="mdl-textfield__input" id="worldview" readonly>
+                        <input type="hidden" value="" class="stat_selector" id="worldview_h" name="worldview">
+                        <i class="mdl-icon-toggle__label material-icons">keyboard_arrow_down</i>
+                        <label for="worldview" class="mdl-textfield__label">World View</label>
+                        <ul for="worldview" class="mdl-menu mdl-menu--bottom-left mdl-js-menu">
+                            {% for worldview in worldviews %}
+                            <li id="wv-{{ loop.index }}" class="mdl-menu__item" data-val="{{ worldview }}">{{ worldview }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% for worldview, details in worldviews.items() %}
+                        <div class="mdl-tooltip" id="tooltip" data-mdl-for="wv-{{ loop.index }}">
+                            {{ details['description'] }}
+                         </div>
+                        {% endfor %}
+                    </div>
+
+                    <div id="personality_input" class="mdl-textfield mdl-js-textfield mdl-textfield--floating-label getmdl-select getmdl-select__fix-height">
+                        <input type="text" value="" class="mdl-textfield__input" id="personality" readonly>
+                        <input type="hidden" value="" class="stat_selector" id="personality_h" name="personality">
+                        <i class="mdl-icon-toggle__label material-icons">keyboard_arrow_down</i>
+                        <label for="personality" class="mdl-textfield__label">Personality</label>
+                        <ul for="personality" class="mdl-menu mdl-menu--bottom-left mdl-js-menu">
+                            {% for personality in personalities %}
+                            <li id="ps-{{ loop.index }}" class="mdl-menu__item" data-val="{{ personality }}">{{ personality }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% for personality, details in personalities.items() %}
+                        <div class="mdl-tooltip" id="tooltip" data-mdl-for="ps-{{ loop.index }}">
+                            {{ details['description'] }}
+                         </div>
+                        {% endfor %}
+                    </div>
+
+                    <div id="class_input" class="mdl-textfield mdl-js-textfield mdl-textfield--floating-label getmdl-select getmdl-select__fix-height">
+                        <input type="text" value="" class="mdl-textfield__input" id="class" readonly>
+                        <input type="hidden" value="" class="stat_selector" id="class_h" name="class">
+                        <i class="mdl-icon-toggle__label material-icons">keyboard_arrow_down</i>
+                        <label for="class" class="mdl-textfield__label">Social Class</label>
+                        <ul for="class" class="mdl-menu mdl-menu--bottom-left mdl-js-menu">
+                            {% for s_class in s_classes %}
+                            <li id="class-{{ loop.index }}" class="mdl-menu__item" data-val="{{ s_class }}">{{ s_class }}</li>
+                            {% endfor %}
+                        </ul>
+                        {% for s_class, details in s_classes.items() %}
+                        <div class="mdl-tooltip" id="tooltip" data-mdl-for="class-{{ loop.index }}">
+                            {{ details['description'] }}
+                         </div>
+                        {% endfor %}
+                    </div>
+                    
+
+
+                </div>
+
+                <div id="dropdownContainer" class="story-sheet-container">
+                    <!-- Relationships -->
+                    <div class="mdl-textfield mdl-js-textfield mdl-textfield--floating-label mdl-textfield--textarea">
+                        <textarea class="mdl-textfield__input textarea-wizard" type="text" rows="3" id="storyInput"
+                            name="storyInput"></textarea>
+                        <label class="mdl-textfield__label " for="storyInput">Your Backstory</label>
+                        <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generateBackstory"><i
+                                class="material-icons">autorenew</i></button>
+                    </div>
+
+                    <div class="mdl-textfield mdl-js-textfield mdl-textfield--floating-label mdl-textfield--textarea">
+                        <textarea class="mdl-textfield__input textarea-wizard" type="text" rows="3"
+                            name="relationsInput" id="relationsInput"></textarea>
+                        <label class="mdl-textfield__label" for="relationsInput">Your Relationships</label>
+                        <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generateRelations"><i
+                                class="material-icons">autorenew</i></button>
+                    </div>
+
+                    <div class="mdl-textfield mdl-js-textfield mdl-textfield--floating-label mdl-textfield--textarea">
+                        <textarea class="mdl-textfield__input textarea-wizard" type="text" rows="3"
+                            name="lifestyleInput" id="lifestyleInput"></textarea>
+                        <label class="mdl-textfield__label" for="lifestyleInput">Your Lifestyle</label>
+                        <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generateLifestyle"><i
+                                class="material-icons">autorenew</i></button>
+                    </div>
+
+
+                </div>
+
+                
+                <div id="perksContainer" class="story-sheet-container">
+                    <!-- Your Perks -->
+                    <div class="mdl-textfield chip-list mdl-js-textfield mdl-textfield--floating-label">
+                        <input class="mdl-textfield__input" type="text" id="newPerk">
+                        <label class="mdl-textfield__label" for="newPerk">Skills, Perks & Traits</label>
+                        <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generatePerks"><i
+                                class="material-icons">autorenew</i></button>
+                        <button class="mdl-button mdl-js-button mdl-button--icon" id="addPerk"><i
+                                class="material-icons">add</i></button>
+                    </div>
+                    <div id="perksList"></div>
+
+                    <!-- Your Places -->
+                    <div class="mdl-textfield chip-list mdl-js-textfield mdl-textfield--floating-label">
+                        <input class="mdl-textfield__input" type="text" id="newPlace">
+                        <label class="mdl-textfield__label" for="newPlace">Names of Places & People</label>
+                        <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generatePlaces"><i
+                                class="material-icons">autorenew</i></button>
+                        <button class="mdl-button mdl-js-button mdl-button--icon" id="addPlace"><i
+                                class="material-icons">add</i></button>
+                    </div>
+                    <div id="placesList"></div>
+
+                    
+                    <!-- Your Assets -->
+                    <div class="add_container">
+                    <div class="mdl-textfield chip-list mdl-js-textfield mdl-textfield--floating-label">
+                        <input class="mdl-textfield__input" type="text" id="newAsset">
+                        <label class="mdl-textfield__label" for="newAsset">Possessions</label>
+                        <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generateAssets"><i
+                                class="material-icons">autorenew</i></button>
+                        <button class="mdl-button mdl-js-button mdl-button--icon" id="addAsset"><i
+                                class="material-icons">add</i></button>
+                    </div>
+                    <div id="assetsList"></div>
+                </div>
+                </div>
+            </div>
+            <div id="stat_container">
+                <div id="stat_dominance" class="stat">
+                    <i class="material-icons material-symbols-outlined md-48">swords</i>
+                    <span class="stat_descriptor"></span>
+                    <div class="mdl-tooltip" data-mdl-for="stat_dominance">
+                        <b>Dominance:</b> Represents power, leadership, and authority. High dominance indicates a character's ability to wield control or exert power, possibly in governing or organizational structures.
+                    </div>
+                </div>
+
+                <div id="stat_influence" class="stat">
+                    <i class="material-icons md-48">emoji_events</i>
+                    <span class="stat_descriptor"></span>
+                    <div class="mdl-tooltip" data-mdl-for="stat_influence">
+                        <b>Influence:</b> Relates to a character's ability to inspire others and make a significant cultural or societal impact. This is not just fame, but leaving behind an enduring mark or change.
+                    </div>
+                </div>
+                <div id="stat_insight" class="stat">
+                    <i class="material-icons md-48">psychology</i>
+                    <span class="stat_descriptor"></span>
+                    <div class="mdl-tooltip" data-mdl-for="stat_insight">
+                        <b>Insight:</b> Represents a character's mental and emotional wisdom. High insight reflects a deep understanding of oneself and the world, a connection with various aspects of life.
+                    </div>
+                </div>
+                <div id="stat_wealth" class="stat">
+                    <i class="material-icons md-48">savings</i>
+                    <span class="stat_descriptor"></span>
+                    <div class="mdl-tooltip" data-mdl-for="stat_wealth">
+                        Wealth
+                    </div>
+                </div>
+                <div id="stat_debt" class="stat">
+                    <i class="material-icons md-48">running_with_errors</i>
+                    <span class="stat_descriptor"></span>
+                    <div class="mdl-tooltip" data-mdl-for="stat_debt">
+                        Debt
+                    </div>
+                </div>
+            </div>
+            <a id="json_toStory" class="mdl-button mdl-button--colored mdl-js-button mdl-js-ripple-effect">
+                Advanced Mode
+            </a>
+        </form>
+        <div class="mdl-card__actions mdl-card--border">
+            <a id="json_toStory" class="mdl-button mdl-button--colored mdl-js-button mdl-js-ripple-effect">
+                Generate Story
+            </a>
+        </div>
+        <div class="mdl-card__menu">
+            <button id="share" class="mdl-button mdl-button--icon mdl-js-button mdl-js-ripple-effect">
+                <i class="material-icons">share</i>
+                <div class="mdl-tooltip" data-mdl-for="share">
+                    share
+                </div>
+            </button>
+            <button id="save" class="mdl-button mdl-button--icon mdl-js-button mdl-js-ripple-effect">
+                <i class="material-icons">save</i>
+                <div class="mdl-tooltip" data-mdl-for="save">
+                    save
+                </div>
+            </button>
+        </div>
+    </div>
+    {% endblock %}

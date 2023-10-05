@@ -145,11 +145,17 @@ $(document).ready(function () {
         socket.emit('stat_change', values);
     };
 
+    $('#advanced_toggle').click(function() {
+        $('#create-sheet, #select-sheet').toggle();
+    });
+
+    $('#select-sheet').hide();
+    $('#create-sheet').hide();
 
           // Function to emit the object to the backend
 
   // Listen for changes to any input element with class 'stat_selector'
-  $('#story-sheet li').click(function () {
+  $('#game-sheet li').click(function () {
     let values = {};
     $('.stat_selector').each(function () {
       values[$(this).attr('name')] = $(this).val();

@@ -32,7 +32,7 @@ transform: scale(0.75);
 
 .mdl-textfield {
 margin-right: 35px;
-margin-bottom: 30px;
+margin-bottom: 10px;
 }
 body,
 .mdl-layout__header,
@@ -129,6 +129,7 @@ border-bottom: 1px solid rgba(255,255,255,.12);
 
 .chip-list {
     margin-right: 70px;
+    width: 210px;
 }
 
 input[type="button"],
@@ -188,9 +189,10 @@ input[type="button"]:hover {
     border-radius: 10px;
 }
 
-.story-sheet-container{
+.story-sheet-container {
     display: flex;
     flex-direction: row;
+    margin-top: 20px;
 }
 div#story-sheet {
     display: flex;
@@ -355,6 +357,12 @@ input#timeline-bar.is-lowest-value::-webkit-slider-thumb {
     margin-right: auto;
 }
 
+.vert_seperator {
+    width: 1px;
+    background: rgb(255 255 255 / 20%);
+}
+
+
 /* CSS for Debug FAB */
 #debugFAB {
     position: fixed;
@@ -364,7 +372,7 @@ input#timeline-bar.is-lowest-value::-webkit-slider-thumb {
 }
 
 span.stat_descriptor {
-    padding: 5px;
+    padding: 10px;
     font-size: small;
 }
 
@@ -384,8 +392,8 @@ span.stat_descriptor {
   #stat_container {
     display: flex;
     justify-content: space-evenly;
-    margin-bottom: 25px;
-    margin-top: 40px;
+    margin-bottom: 50px;
+    margin-top: 25px;
 }
 
 div.stat {
@@ -451,7 +459,7 @@ span.stat_descriptor {
 
 #wizard>.mdl-card__title {
     background-image: url('https://imgsbright.brightstarmusical.com/what_style_of_art_was_popular_during_the_enlightenment.jpg');
-    height: 176px;
+    height: 126px;
 }
 
 #mission-picker .mdl-card__content {
@@ -488,6 +496,13 @@ span.stat_descriptor {
     transform: scale(1.05);
 }
 
+.add_container {
+    flex-wrap: wrap;
+    align-content: center;
+    justify-content: flex-start;
+    align-items: center;
+}
+
 .mdl-card__actions.actions-disabled {
     pointer-events: none;
     cursor: not-allowed;
@@ -521,7 +536,7 @@ span.stat_descriptor {
 .character-modal .mdl-textfield,
 .character-modal .mdl-select,
 .character-modal .mdl-list {
-margin-bottom: 20px;
+margin-bottom: 10px;
 }
 
 /* Buttons and icons */

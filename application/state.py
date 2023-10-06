@@ -47,21 +47,23 @@ class WIZARD_CALCULATE(GameState):
     def transition(game, accepted_proposal=None):
         calculate_stats(game, accepted_proposal)
 
-class SELECT_MISSION_INIT(GameState):
+class GAME_LOADING(GameState):
     def can_init_game():
         return True
     def transition(game, accepted_proposal):
-        compute_mission_selection(game, accepted_proposal)
+        load_game(game, accepted_proposal)
+        launch_game_ui(game)
+        compute_mission_selection(game)
 
 class CALCULATE_RESPONSE(GameState):
     def transition(game, accepted_proposal: Dict):
         asyncio.run(stop_ticker(game))
         compute_event_response(game, accepted_proposal)
     
-class GAME_INIT(GameState):
+class MISSION_CHOSEN(GameState):
     def transition(game, accepted_proposal):
-        launch_game_ui(game)
-        compute_next_event(game, accepted_proposal)
+        game.player_mission = accepted_proposal['mission']
+        compute_event(game, accepted_proposal)
 
 class GAME_WAIT(GameState):
     def transition(game, accepted_proposal):
@@ -188,23 +190,23 @@ async def update_time(game, speed):
     date = game.datetime.strftime('%d.%m')
     year = game.datetime.strftime('%Y AD')
 
-    if (game.triggerdate <= game.datetime):
-        mission_event_template = render_template(
-        'mission_event.html', 
-        name=game.player_name,
-        event=game.next_event
-        )
-        socketio.emit('drop_event', {'new_html_content': mission_event_template, 'actions': game.next_event['actions']})
-        game.triggerdate = datetime.strptime('1922-01-01 19:20:00', '%Y-%m-%d %H:%M:%S')
-        game.player_location = game.next_event['location']
-        proposal = {
-            'action': 'change_speed',
-            'speed': float(0.0)
-        }
-        game.present(proposal)
+    # for each event in scheduled_events, check if triggerdate is less than datetime
+    for event in game.scheduled_events:
+        if (event['triggerdate'] <= game.datetime):
+            event['triggerdate'] = datetime.strptime('1922-01-01 19:20:00', '%Y-%m-%d %H:%M:%S')
+            if (event['type'] == 'mission_event'):
+                socketio.emit('drop_event', {'new_html_content': event['html'], 'actions': event['actions']})
+                game.player_location = event['location']
 
+            elif (event['type'] == 'mission_select'):
+                proposal = {
+                    'action': 'change_speed',
+                    'speed': float(0.0)
+                }
+                game.present(proposal)
 
     socketio.emit('update_time', {'time': time, 'date': date, 'year': year})
+
 
 # FETCH RESPONSE OOGABOOGA
 
@@ -296,7 +298,6 @@ def compute_event_response(game, accepted_proposal: Dict):
 
     print(event)
 
-    event.pop('actions')
     event['executed_action'] = accepted_proposal['executed_action']
     event['date'] = game.datetime
 
@@ -408,7 +409,7 @@ def generate_action_analysis(game):
     time_of_day = check_datetime(date)
     prompt = textwrap.dedent("""### Input:
     You are an expert scenario analyst for grand strategy games. You are tasked with the analysis of a player's actions for a a mission in JSON format.
-    The theme of the game is the golden age of the renaissance, and the player is being tasked by a hidden society.
+    The theme of the game is the Dutch Golden Age.
 
     Consider the following EXAMPLE event (just a guideline to better parse the format -> so do not output this):{
 "action_analysis": "You stand at the crossroads of enlightenment. The shorter alleyway might lead you directly to the hidden society's meeting place, accelerating your journey into the secrets of the golden age. However, treacherous plots could ensnare and cause the loss of invaluable insights. This decision teeters between unveiling artful masterpieces or descending into obscurity.": 40,
@@ -434,17 +435,29 @@ def generate_action_analysis(game):
 
     The following is the gamestate that you may need to analyze this event:
                                 
-    Player state:
     Your name: {game.player_name}
-    Your location: {game.player_location}
     Your age: {game.player_age}
     Your occupation: {game.player_occupation}
-    Your perks: {game.player_perks}
-    Your holdings: {game.player_holdings}
-    Your relations: {game.relations_background}
+    """+insert("Your location: ",game.player_location)+f"""                     
+
+    Your wealth (in florins): {game.player_wealth}
+    Your debt (in florins): {game.player_debt}
+    """+insert("Your possessions: ",game.player_holdings)+f"""                     
+
+    """+insert("Your significant people & places: ",game.player_places)+f""" 
+    """+insert("Your relationships described in more detail: ",game.player_relations)+f"""                     
+              
+    Your worldview: {game.player_worldview}
+    Your social class: {game.player_s_class}
+    Your personality: {game.player_personality}
+    """+insert("Your other traits / perks: ",game.player_perks)+f"""                     
+    """+insert("Your lifestyle: ",game.player_background)+f"""
+
+    And most importantly the current mission you are on:
+    {game.player_mission}
 
     The mission the player is on:
-    {game.mission}
+    {game.player_mission}
 
     The event that the player received:
     {game.player_journal[-1]['event_body']}
@@ -479,11 +492,9 @@ def generate_action_analysis(game):
 
     return prompt
 
-def compute_next_event(game, accepted_proposal: Dict):
-    game.mission = accepted_proposal['mission']
+def compute_event(game, accepted_proposal: Dict):
     json_schema = textwrap.dedent("""{
     "type": "object",
-    "description": "an event the player may receive in their mission,
     "properties": {
         "title": {"type": "string"},
         "location": {"type": "string"},
@@ -534,10 +545,31 @@ def compute_next_event(game, accepted_proposal: Dict):
         result = asyncio.run(get_ws_result(prompt, json_schema))
     event = json.loads(result)
 
+    can_time_array, est_time, est_date = generate_schedule(event)
 
+    # append triggerdate to event
+    triggerdate = get_trigger_datetime(game,est_date, est_time, can_time_array)
 
-    # parse trigger conditionals into a better format
+    event['triggerdate'] = triggerdate
+    event['type'] = 'mission_event'
+    event['html'] = render_template(
+            'mission_event.html', 
+            name=game.player_name,
+            event=event
+            )
+     
+    # append event to game scheduled_events
+    game.scheduled_events.append(event)
 
+    print(event)
+
+    print("proceeding")
+    proposal = {
+    'action': 'wait_for_input'
+    }
+    game.present(proposal)
+
+def generate_schedule(event):
     trigger_conditionals = event['trigger_conditionals']
     event.pop('trigger_conditionals')
 
@@ -577,17 +609,7 @@ def compute_next_event(game, accepted_proposal: Dict):
         est_date = random.choices(can_date_array, weights=weights, k=1)[0]
     else:
         est_date = must_date
-
-    game.next_event = event
-    game.triggerdate = get_trigger_datetime(game,est_date, est_time, can_time_array)
-    print(game.triggerdate)
-
-    # Send the result to the client
-    print("proceeding")
-    proposal = {
-    'action': 'wait_for_input'
-    }
-    game.present(proposal)
+    return can_time_array,est_time,est_date
 
 def retrieve_can_time_array(can_trigger):
     possible_times = []
@@ -667,7 +689,7 @@ def get_random_time(time_status):
     minute = random.randint(0, 59)
     return time(hour, minute)
 
-def get_trigger_datetime(game,date_status, time_status, can_time_array):
+def get_trigger_datetime(game,date_status, time_status, can_time_array = ['morning','afternoon','evening','night']):
 
     timesequence = ['morning','afternoon','evening','night']
     # get index for each item in can_time_array from timesequence
@@ -721,13 +743,10 @@ def get_trigger_datetime(game,date_status, time_status, can_time_array):
 
 def generate_event(game):
     prompt = ""
-    player_perks = ', '.join([str(game.player_perks[i]) for i in range(len(game.player_perks))])
-    player_holdings = ', '.join([str(game.player_holdings[i]) for i in range(len(game.player_holdings))])
-    player_places = ', '.join([str(game.player_places[i]) for i in range(len(game.player_places))])
 
     prompt = textwrap.dedent("""### Input:
     You are an expert event writer for grand strategy games. You are tasked with generating a player event for a a mission in JSON format that is consistent with the current gamestate.
-    The theme of the game is the golden age of the renaissance, and the player is being tasked by a hidden society.
+    The theme of the game is the Dutch golden age of the renaissance.
 
     Consider the following example event (just a guideline to help you understand the format):{
 "properties": {
@@ -778,40 +797,34 @@ def generate_event(game):
 
     The following is the gamestate that you need to craft your event:
 
-    #World state:
-    Your journal: {game.player_journal}
+    """+insert("Your journal: ",game.player_journal)+f"""                     
     State complexity: 
     {game.complexity}
     State significance: 
     {game.significance}
 
-    #Your PII:
     Your name: {game.player_name}
     Your age: {game.player_age}
     Your occupation: {game.player_occupation}
-    Your location: {game.player_location}
-    
-    #Your holdings:
+    """+insert("Your location: ",game.player_location)+f"""                     
+
     Your wealth (in florins): {game.player_wealth}
     Your debt (in florins): {game.player_debt}
-    Your possessions: {player_holdings}
+    """+insert("Your possessions: ",game.player_holdings)+f"""                     
 
-    #Your relationships:
-    Your significant people & places: {player_places}
-    Your relationships described in more detail: {game.relations_background}
-
-    #Your characteristics:
+    """+insert("Your significant people & places: ",game.player_places)+f""" 
+    """+insert("Your relationships described in more detail: ",game.player_relations)+f"""                     
+              
     Your worldview: {game.player_worldview}
     Your social class: {game.player_s_class}
     Your personality: {game.player_personality}
-    Your other traits / perks: {player_perks}
-
-    #Your backstory:
-    Your origin: {game.world_background}
-    Your lifestyle: {game.player_lifestyle}
+    """+insert("Your other traits / perks: ",game.player_perks)+f"""                     
+  
+    """+insert("Your background:",game.player_background)+f"""                     
+    """+insert("Your lifestyle: ",game.player_background)+f"""
 
     And most importantly the current mission you are on:
-    {game.mission}
+    {game.player_mission}
                          
     ### Instruction:
     Here are some specific guidelines you must follow:
@@ -825,25 +838,76 @@ def generate_event(game):
 
     print(prompt)
     return prompt
-    
-def compute_mission_selection(game, accepted_proposal: Dict):
+
+def load_game(game, accepted_proposal: Dict):
     game.player_name = accepted_proposal['player_state']['name']
     game.player_age = accepted_proposal['player_state']['age']
     game.player_occupation = accepted_proposal['player_state']['occupation']
     game.player_places = accepted_proposal['player_relations']['places']
     game.player_perks = accepted_proposal['player_state']['perks']
     game.player_holdings = accepted_proposal['player_holdings']
-    game.relations_background = accepted_proposal['player_relations']['background']
+    game.player_relations = accepted_proposal['player_relations']['background']
     game.player_lifestyle = accepted_proposal['world_state']['lifestyle']
-    game.world_background = accepted_proposal['world_state']['background']
+    game.player_background = accepted_proposal['world_state']['background']
+    game.player_perks = ', '.join([str(game.player_perks[i]) for i in range(len(game.player_perks))])
+    game.player_holdings = ', '.join([str(game.player_holdings[i]) for i in range(len(game.player_holdings))])
+    game.player_places = ', '.join([str(game.player_places[i]) for i in range(len(game.player_places))])
+
+    json_schema = textwrap.dedent("""{
+    "type": "object",
+    "properties": {
+        "state_complexity": {"type": "string"},
+        "state_significance": {"type": "string"},
+        "missions": {
+            "type": "object",
+            "description": "The missions you (=the player) are facing (always write in the second perspective)",
+            "properties": {
+                "mission_1": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "narrative": {"type": "string"},
+                        "closure_conditions": {"type": "string"}
+                    }
+                },
+                "mission_2": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "narrative": {"type": "string"},
+                        "closure_conditions": {"type": "string"}
+                    }
+                },
+                "mission_3": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "narrative": {"type": "string"},
+                        "closure_conditions": {"type": "string"}
+                    }
+                }
+            }
+        }
+    }
+}""")
+
+
+    if (Config.SKIP_GEN_STATE):
+        result = Config.SKIP_VAL1
+    else:
+        prompt = generate_mission(game)
+        result = asyncio.run(get_ws_result(prompt, json_schema, emit_progress=1750))
+    event = json.loads(result)    
+
+
     game_loader_template = render_template(
     'game_loader.html', 
     name=game.player_name
     )
 
-    # Prepare HTML content and send to the client
     socketio.emit('message_story_init', {'new_html_content': game_loader_template})
-
+    
+def compute_mission_selection(game):
     json_schema = textwrap.dedent("""{
     "type": "object",
     "properties": {
@@ -887,43 +951,38 @@ def compute_mission_selection(game, accepted_proposal: Dict):
         result = Config.SKIP_VAL1
     else:
         prompt = generate_mission(game)
+        result = asyncio.run(get_ws_result(prompt, json_schema))
+    event = json.loads(result)    
 
-        # Run the async function in a new event loop
-        result = asyncio.run(get_ws_result(prompt, json_schema, emit_progress=1750))
-    result = json.loads(result)    
+    game.complexity = event['state_complexity']
+    game.significance = event['state_significance']
 
-    # Extract the missions object and convert it to an array
-    missions_array = [value for key, value in result['missions'].items()]
+    event['triggerdate'] = get_trigger_datetime(game,'tomorrow', 'morning')
+    event['type'] = 'mission_select'
+    event['html'] = render_template(
+            'mission_picker.html', 
+            name=game.player_name,
+            missions=event['missions']
+            )
+    
+    # append event to game scheduled_events
+    game.scheduled_events.append(event)
 
-    # Create a new JSON object with the original array-based structure
-    stories = {
-        "state_complexity": result['state_complexity'],
-        "state_significance": result['state_significance'],
-        "missions": missions_array
+    print("proceeding")
+    proposal = {
+    'action': 'wait_for_input'
     }
+    game.present(proposal)
 
-    game.complexity = stories['state_complexity']
-    game.significance = stories['state_significance']
-
-    mission_picker_template = render_template(
-    'mission_picker.html', 
-    name=game.player_name,
-    stories=stories['missions']
-    )
-
-    socketio.emit('message_story', {'new_html_content': mission_picker_template, 'stories': stories['missions']})
 
 def generate_mission(game):
 
     prompt = ""
-    player_perks = ', '.join([str(game.player_perks[i]) for i in range(len(game.player_perks))])
-    player_holdings = ', '.join([str(game.player_holdings[i]) for i in range(len(game.player_holdings))])
-    player_places = ', '.join([str(game.player_places[i]) for i in range(len(game.player_places))])
 
     prompt = textwrap.dedent("""
     ### Input:
     You are an expert quest/scenario writer for grand strategy games. You are tasked with generating a player quest in JSON format that is consistent with the current gamestate.
-    The theme of the game is the golden age of the renaissance, and the player is being tasked by a hidden society.
+    The theme of the game is the Dutch golden age of the renaissance.
 
     Consider the following example array of missions (just a guideline to help you understand the format):
     {
@@ -949,45 +1008,51 @@ def generate_mission(game):
 }"""+f"""                 
 
     The following is the gamestate that you need to analyze:
-                                
-    #World state:
-    Your journal: {game.player_journal}
+    """+insert("Your journal: ",game.player_journal)+f"""                     
 
-    #Your PII:
     Your name: {game.player_name}
     Your age: {game.player_age}
     Your occupation: {game.player_occupation}
-    Your location: {game.player_location}
-    
-    #Your holdings:
+    """+insert("Your location: ",game.player_location)+f"""                     
+
     Your wealth (in florins): {game.player_wealth}
     Your debt (in florins): {game.player_debt}
-    Your possessions: {player_holdings}
+    """+insert("Your possessions: ",game.player_holdings)+f"""                     
 
-    #Your relationships:
-    Your significant people & places: {player_places}
-    Your relationships described in more detail: {game.relations_background}
-
-    #Your characteristics:
+    """+insert("Your significant people & places: ",game.player_places)+f""" 
+    """+insert("Your relationships described in more detail: ",game.player_relations)+f"""                     
+              
     Your worldview: {game.player_worldview}
+
     Your social class: {game.player_s_class}
+
     Your personality: {game.player_personality}
-    Your other traits / perks: {player_perks}
+  
+    """+insert("Your background: ",game.player_background)+f"""                     
+    """+insert("Your lifestyle: ",game.player_lifestyle)+f"""
 
-    #Your backstory:
-    Your origin: {game.world_background}
-    Your lifestyle: {game.player_lifestyle}
+    """+insert("Your other traits / perks: ",game.player_perks)+f"""                     
 
+    """                     
+    +f"""
     ### Instruction:
     Here are some specific guidelines you must follow:
-    1. Understand the gamestate fully.
+    1. Understand the gamestate fully and constellate interconnected narratives.
     2. Distill challenges, paradoxes, urgent situations, significant event and complicated situations faced by the player in 'state_complexity' and 'state_significance'.
-    3. Generate THREE engaging missions that are preferably warranted by the state complexity and state significance.
+    3. Generate THREE engaging missions that are preferably warranted by the state complexity, player characteristics, and state significance.
     5. Ensure that the generated missions BRANCH from the current gamestate and are NOT SEQUENTIAL TO EACH OTHER.
     6. ALWAYS write missions in the SECOND perspective - as if written for the player. E.g. "You have.." or "You are.." or "You need to.." or "Your x.." or "You are facing..".
     7. NEVER use the example storylines or information/concepts from the example JSON above. Be be creative and think outside the box.
-
+    8. Keep each mission mysterious and open-ended. Do not reveal the outcome of the mission.
+          
     ### Response:""")
     
     print(prompt)
     return prompt
+
+def insert(string, argument):
+    if argument is None or argument == "" or argument == [] or argument == {} or argument == "Undefined":
+        return ""
+    elif isinstance(argument, list):
+        argument = ', '.join(map(str, argument))
+    return string + argument

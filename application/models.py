@@ -12,9 +12,8 @@ models = Blueprint('models', __name__,
 class Game:
     def __init__(self):
         self.state: GameState = None
-        self.next_event = {}
-        self.triggerdate = datetime.strptime('2922-01-01 19:20:00', '%Y-%m-%d %H:%M:%S')
-        self.mission = {}
+        self.scheduled_events = []
+        self.player_mission = {}
         self.player_journal = []
         self.event_loop = None
         self.timeline = 0
@@ -37,9 +36,9 @@ class Game:
         self.player_perks: List[str] = []
         self.player_holdings: List[str] = []
         self.player_lifestyle: str = ""
-        self.relations_background: str = ""
-        self.world_background: str = ""
-        self.world_journal: List[str] = []
+        self.player_relations: str = ""
+        self.player_background: str = ""
+        self.player_journal: List[str] = []
         self.datetime = datetime.now()
         self.time_status = 'morning'
         self.ticker = None
@@ -55,7 +54,7 @@ class Game:
             return True
         if proposal['action'] == 'game_init':
             try:
-                if not self.state.can_init_game():
+                if not self.state.can_init_game:
                     print("Can't init game")
                     return False
                 if not proposal['mission']:
@@ -69,18 +68,20 @@ class Game:
                 print("KeyError")
                 return False
         if proposal['action'] == 'app_init':
+            print("game:", self.ticker)
             return True
         if proposal['action'] == 'stat_change':
             #if worldview and personality and class not emppty
             print(proposal)
 
-            if (proposal['values']['worldview'] != "" and proposal['values']['personality'] != "" and proposal['values']['class'] != ""):
-                return True
-            else:
-                return False
+            if proposal and 'values' in proposal:
+                values = proposal['values']
+                if all(key in values and values[key] != "" for key in ['worldview', 'personality', 'class']):
+                    return True
+            return False
         if proposal['action'] == 'change_speed':
             try:
-                if not self.state.can_change_speed():
+                if not self.state.can_change_speed:
                     print(self.state)
                     return False
                 # if speed is not int
@@ -116,10 +117,11 @@ class Game:
                     return False
 
                 # Validate world background (can't be empty)
-                if not proposal['world_state']['background']:
-                    print("World background is empty")
+                if not proposal['player_state']['age']:
+                    print("Age is empty")
                     return False
                 return True
+            
             
             except KeyError:  # Handle cases where expected keys are not present
                 print("KeyError")
@@ -132,7 +134,7 @@ def compute_next_state(accepted_proposal: Dict):
     if (accepted_proposal['action'] == "execute_action"):
         return CALCULATE_RESPONSE
     if (accepted_proposal['action'] == "wizard_to_story"):
-        return SELECT_MISSION_INIT
+        return GAME_LOADING
     if (accepted_proposal['action'] == "stat_change"):
         return WIZARD_CALCULATE
     if (accepted_proposal['action'] == "game_init"):

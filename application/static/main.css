@@ -46,6 +46,10 @@ body,
 
 }
 
+div#loader {
+    overflow: hidden;
+}
+
 .mdl-card__actions.mdl-card--border {
     border-top: 1px solid rgb(255 255 255 / 10%);
 }
@@ -418,6 +422,7 @@ div.stat {
 
 .mdl-card__actions{
     padding: 0%;
+    overflow: none;
 }
 
 #b1 {

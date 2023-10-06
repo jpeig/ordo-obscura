@@ -1,0 +1,8 @@
+# ignore include, lib, scripts, share, and test directories
+
+share/
+include/
+lib/
+scripts/
+test/
+__pycache__/

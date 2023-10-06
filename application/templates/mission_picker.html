@@ -7,10 +7,10 @@
     </div>
     <div class="mdl-card__content">
 
-      {% for story in stories %}
+      {% for mission in missions %}
         <div class="story" id="story-{{ loop.index }}">
-            <h4>{{ story.title }}</h4>
-            <p>{{ story.narrative }}</p>
+            <h4>{{ mission.title }}</h4>
+            <p>{{ mission.narrative }}</p>
         </div>
         {% endfor %}
 
@@ -20,9 +20,9 @@
             Let's go!
         </a>
         <!-- Simple Tooltip -->
-        {% for story in stories %}
+        {% for mission in missions %}
         <div class="mdl-tooltip hidden" id="tooltip-{{ loop.index }}" data-mdl-for="start-story">
-            <b>Closure Conditions: </b>{{ story.closure_conditions }}
+            <b>Closure Conditions: </b>{{ mission.closure_conditions }}
          </div>
          {% endfor %}
 

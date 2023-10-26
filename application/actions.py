@@ -1,6 +1,6 @@
 from flask import Blueprint, g
 from . import socketio
-from .models import game
+from .models import Game
 import re
 import textwrap
 
@@ -8,33 +8,54 @@ actions = Blueprint('actions', __name__,
                         template_folder='templates',
                         static_folder="static")
 
-@socketio.on('game_init')
+game = {}
+
+@socketio.on('commandKeyPressed')
 def handle_updated_output(data):
-    print('received message: ' + str(data))
+    def is_property(obj, attr):
+        """Check if an attribute is a @property method."""
+        attr_obj = getattr(obj, attr)
+        return callable(attr_obj) and hasattr(attr_obj, '__code__') and len(attr_obj.__code__.co_varnames) == 1
+
+    object = None
+    print(data['message'])
+    
+    match data['message']:
+        case 'game.journal':
+            object = game.journal
+        case 'game.player':
+            object = game.player
+        case 'game.time':
+            object = game.time
+    
+    # Print attributes and properties of the game object
+    for attr in dir(object):
+        if not attr.startswith("__"):
+            val = getattr(object, attr)
+            if isinstance(val, str) and (not callable(val) or is_property(object, attr)):
+                print(f"{attr}: {val}\n")
+    for attr in dir(object):
+        if not attr.startswith("__"):
+            val = getattr(object, attr)
+            if isinstance(val, int) or isinstance(val, float) and (not callable(val) or is_property(object, attr)):
+                print(f"{attr}: {val}\n")
+
+@socketio.on('execute_option')
+def handle_updated_output(event_id, option_id):
     proposal = {
-    'mission': data,
-    'action': 'game_init'
+    'event_id': int(event_id),
+    'option_id': int(option_id),
+    'action': 'execute_option'
     }
     game.present(proposal)
 
-@socketio.on('execute_action')
+@socketio.on('change_stat')
 def handle_updated_output(data):
-    print('received message: ' + str(data))
-    proposal = {
-    'executed_action': data,
-    'action': 'execute_action'
-    }
-    game.present(proposal)
-
-@socketio.on('stat_change')
-def handle_updated_output(data):
-    print('received message: ' + str(data))
     proposal = {
     'values': data,
-    'action': 'stat_change'
+    'action': 'change_stat'
     }
     game.present(proposal)
-
 
 @socketio.on('change_speed')
 def handle_change_speed(speed):
@@ -47,41 +68,37 @@ def handle_change_speed(speed):
     }
     game.present(proposal)
 
-@socketio.on('app_init')
+@socketio.on('init_app')
 def handle_app_init():
+    global game 
+    game = Game()
     proposal = {
-    'action': 'app_init'
+    'action': 'init_app'
     }
     game.present(proposal)
 
 
-@socketio.on('wizard_to_story')
+@socketio.on('load_game')
 def handle_updated_output(data):
-    # Extract perks and assets dynamically
+    # Extract people and objects dynamically
     existing_dict = {item['name']: item['value'] for item in data}
 
-    perks = [v for k, v in existing_dict.items() if re.fullmatch(r'perksList-item\d+', k)]
-    assets = [v for k, v in existing_dict.items() if re.fullmatch(r'assetsList-item\d+', k)]
+    people = [v for k, v in existing_dict.items() if re.fullmatch(r'peopleList-item\d+', k)]
+    objects = [v for k, v in existing_dict.items() if re.fullmatch(r'objectsList-item\d+', k)]
     places = [v for k, v in existing_dict.items() if re.fullmatch(r'placesList-item\d+', k)]
 
     # Transform into the new format
     proposal = {
-    'player_state': {
-        'name': existing_dict['name'],
-        'age': existing_dict['age'],
-        'occupation': existing_dict['occupation'],
-        'perks': perks
-    },
-    'world_state': {
-        'background': existing_dict['storyInput'],
-        'lifestyle': existing_dict['lifestyleInput'],
-    },
-    'player_relations': {
-        'background': existing_dict['relationsInput'],
-        'places': places
-    },
-    'player_holdings': assets,
-    'action': 'wizard_to_story'
+    'name': existing_dict['name'],
+    'age': existing_dict['age'],
+    'occupation': existing_dict['occupation'],
+    'background': existing_dict['storyInput'],
+    'lifestyle': existing_dict['lifestyleInput'],
+    'relations': existing_dict['relationsInput'],
+    'people': people,
+    'places': places,
+    'objects': objects,
+    'action': 'load_game'
     }
 
     print(proposal)

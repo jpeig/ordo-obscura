@@ -1,6 +1,8 @@
 {% extends 'base.html' %}
 
 {% block content %}
+<div id="d3_container">
+</div>
 <div class="mdl-layout__content mdl-grid dashboard-container" id="event-container">
 
     <div class="modal-draggable obscura-card obscura-card-wide mdl-card mdl-shadow--2dp" id="wizard">
@@ -10,7 +12,7 @@
         <div class="mdl-card__supporting-text">
             Hello, adventurer! Let's begin your journey.
         </div>
-        <form class="mdl-card__content" id="storyForm" action="#">
+        <form class="mdl-card__content" id="wizard-form" action="#">
 
             <!-- Your Name -->
             <div id="fact-sheet">
@@ -78,39 +80,38 @@
 
                 <div id="class_input"
                     class="mdl-textfield mdl-js-textfield mdl-textfield--floating-label getmdl-select getmdl-select__fix-height">
-                    <input type="text" value="" class="mdl-textfield__input" id="class" readonly>
-                    <input type="hidden" value="" class="stat_selector" id="class_h" name="class">
+                    <input type="text" value="" class="mdl-textfield__input" id="socialclass" readonly>
+                    <input type="hidden" value="" class="stat_selector" id="socialclass_h" name="socialclass">
                     <i class="mdl-icon-toggle__label material-icons">keyboard_arrow_down</i>
-                    <label for="class" class="mdl-textfield__label">Social Class</label>
-                    <ul for="class" class="mdl-menu mdl-menu--bottom-left mdl-js-menu">
-                        {% for s_class in s_classes %}
-                        <li id="class-{{ loop.index }}" class="mdl-menu__item" data-val="{{ s_class }}">{{ s_class
-                            }}</li>
+                    <label for="socialclass" class="mdl-textfield__label">Social Class</label>
+                    <ul for="socialclass" class="mdl-menu mdl-menu--bottom-left mdl-js-menu">
+                        {% for socialclass in socialclasses %}
+                        <li id="socialclass-{{ loop.index }}" class="mdl-menu__item" data-val="{{ socialclass }}">{{ socialclass }}</li>
                         {% endfor %}
                     </ul>
-                    {% for s_class, details in s_classes.items() %}
-                    <div class="mdl-tooltip" id="tooltip" data-mdl-for="class-{{ loop.index }}">
+                    {% for socialclass, details in socialclasses.items() %}
+                    <div class="mdl-tooltip" id="tooltip" data-mdl-for="socialclass-{{ loop.index }}">
                         {{ details['description'] }}
                     </div>
                     {% endfor %}
                 </div>
             </div>
             <div id="stat_container">
-                <div id="stat_dominance" class="stat">
+                <div id="stat_force" class="stat">
                     <i class="material-icons material-symbols-outlined md-36">swords</i>
                     <span class="stat_descriptor"></span>
-                    <div class="mdl-tooltip" data-mdl-for="stat_dominance">
-                        <b>Dominance:</b> Represents power, leadership, and authority. High dominance indicates a
+                    <div class="mdl-tooltip" data-mdl-for="stat_force">
+                        <b>Force:</b> Represents power, leadership, and authority. High force indicates a
                         character's ability to wield control or exert power, possibly in governing or organizational
                         structures.
                     </div>
                 </div>
         
-                <div id="stat_influence" class="stat">
+                <div id="stat_diplomacy" class="stat">
                     <i class="material-icons md-36">public</i>
                     <span class="stat_descriptor"></span>
-                    <div class="mdl-tooltip" data-mdl-for="stat_influence">
-                        <b>Influence:</b> Relates to a character's ability to inspire or manipulate others and make significant
+                    <div class="mdl-tooltip" data-mdl-for="stat_diplomacy">
+                        <b>Diplomacy:</b> Relates to a character's ability to inspire or manipulate others and make significant
                         cultural impact. Be it for a humanist cause or... for personal fame and gain.
                     </div>
                 </div>
@@ -173,50 +174,51 @@
 
 
             <div id="select-sheet" class="story-sheet-container">
-                <div class="add_container">
-                    <!-- Your Perks -->
-                    <div class="mdl-textfield chip-list mdl-js-textfield mdl-textfield--floating-label">
-                        <input class="mdl-textfield__input" type="text" id="newPerk">
-                        <label class="mdl-textfield__label" for="newPerk">Skills, Perks & Traits</label>
-                        <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generatePerks"><i
-                                class="material-icons">autorenew</i></button>
-                        <button class="mdl-button mdl-js-button mdl-button--icon" id="addPerk"><i
-                                class="material-icons">add</i></button>
-                    </div>
-                    <div id="perksList"></div>
-                </div>
 
                 <div class="add_container">
                     <!-- Your Places -->
                     <div class="mdl-textfield chip-list mdl-js-textfield mdl-textfield--floating-label">
                         <input class="mdl-textfield__input" type="text" id="newPlace">
-                        <label class="mdl-textfield__label" for="newPlace">Places & People</label>
+                        <label class="mdl-textfield__label" for="newPlace">Significant Places</label>
                         <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generatePlaces"><i
                                 class="material-icons">autorenew</i></button>
                         <button class="mdl-button mdl-js-button mdl-button--icon" id="addPlace"><i
                                 class="material-icons">add</i></button>
                     </div>
                     <div id="placesList"></div>
-
                 </div>
-                <!-- Your Assets -->
+
                 <div class="add_container">
+                    <!-- Your People -->
                     <div class="mdl-textfield chip-list mdl-js-textfield mdl-textfield--floating-label">
-                        <input class="mdl-textfield__input" type="text" id="newAsset">
-                        <label class="mdl-textfield__label" for="newAsset">Possessions</label>
-                        <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generateAssets"><i
+                        <input class="mdl-textfield__input" type="text" id="newPerson">
+                        <label class="mdl-textfield__label" for="newPerson">Significant People</label>
+                        <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generatePeople"><i
                                 class="material-icons">autorenew</i></button>
-                        <button class="mdl-button mdl-js-button mdl-button--icon" id="addAsset"><i
+                        <button class="mdl-button mdl-js-button mdl-button--icon" id="addPerson"><i
                                 class="material-icons">add</i></button>
                     </div>
-                    <div id="assetsList"></div>
+                    <div id="peopleList"></div>
+
+                </div>
+                <!-- Your objects -->
+                <div class="add_container">
+                    <div class="mdl-textfield chip-list mdl-js-textfield mdl-textfield--floating-label">
+                        <input class="mdl-textfield__input" type="text" id="newObject">
+                        <label class="mdl-textfield__label" for="newObject">Significant Objects</label>
+                        <button class="mdl-button mdl-js-button mdl-button--icon generateIcon" id="generateObjects"><i
+                                class="material-icons">autorenew</i></button>
+                        <button class="mdl-button mdl-js-button mdl-button--icon" id="addObject"><i
+                                class="material-icons">add</i></button>
+                    </div>
+                    <div id="objectsList"></div>
                 </div>
             </div>
             
 
     </form>
     <div class="mdl-card__actions mdl-card--border">
-        <a id="json_toStory" class="mdl-button mdl-button--colored mdl-js-button mdl-js-ripple-effect">
+        <a id="load-game" class="mdl-button mdl-button--colored mdl-js-button mdl-js-ripple-effect">
             Generate Story
         </a>
     </div>

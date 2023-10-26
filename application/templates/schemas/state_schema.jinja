@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "properties": {
+    {% for item in items['items'] %}
+    "{{ item }}": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Assign a specific and concise name to this item for reference. No descriptions."
+        },
+        "significance": {
+          "type": "string",
+          "description": "Describe its significance to the player."
+        }
+        {% if items['type'] == "people" %}
+        ,"disposition_towards_player": {
+          "type": "string",
+          "description": "Describe how this entity views the player."
+        }
+        {% endif %}
+        {% if items['type'] != "people" %}
+        ,"owner": {
+          "type": "string",
+          "description": "The name of its owner."
+        }
+        {% endif %}
+        {% if items['type'] != "places" %}
+        ,"location": {
+          "type": "string",
+          "description": "The place where its located."
+        }
+        {% endif %}
+      }
+    }{% if not loop.last %},{% endif %}
+{% endfor %}
+  }
+}

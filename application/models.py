@@ -9,80 +9,307 @@ models = Blueprint('models', __name__,
                         static_folder="static")
 
 
-class Game:
+class Player:
+    notoriety_levels = {
+        1: "You're practically invisible to the world; no one knows your name.",
+        2: "A few people might recognize you, but you're mostly overlooked.",
+        3: "You have a small degree of recognition; a few people know of you.",
+        4: "Your name is occasionally whispered in some circles. You're starting to get noticed.",
+        5: "You've earned a good reputation; many people know and respect you.",
+        6: "Your influence is growing. You're a well-known figure in certain circles.",
+        7: "Your fame has spread wide; crowds gather, and fans celebrate you.",
+        8: "Your name is known, but not always for good reasons. You're a figure of controversy.",
+        9: "Tales of your deeds are shared far and wide; you're the stuff of legends.",
+        10: "Your very existence seems otherworldly. People speak of you with awe, as if you're from myths."
+    }
+
+    financial_health_table = {
+        (1, 1): "You live hand-to-mouth, scraping by with what little you have, but thankfully with minimal debt to weigh you down.",
+        (1, 2): "You're at the bottom rung, living frugally while the specter of debt casts a constant shadow.",
+        (1, 3): "Desperation defines your days as you're destitute and sinking further into the quagmire of debt.",
+
+        (2, 1): "With meager possessions, you've managed to keep your debt at bay, making small but sure steps forward.",
+        (2, 2): "Your limited assets barely keep pace with the bills piling up, making every financial decision a juggling act.",
+        (2, 3): "Though you have some belongings, they're overshadowed by the heavy cloud of crippling debt.",
+
+        (3, 1): "You maintain a middle-class life, balancing expenses comfortably with minimal debt to your name.",
+        (3, 2): "Living an average life, you find yourself constantly budgeting to keep up with the growing debt payments.",
+        (3, 3): "While you live modestly, your expenses often outpace your income due to mounting debts.",
+
+        (4, 1): "You've carved out a decent life for yourself, enjoying some luxuries without the burden of heavy debt.",
+        (4, 2): "Although you've accumulated some wealth, your lifestyle is tempered by the monthly reminders of significant debt.",
+        (4, 3): "Your decent lifestyle is offset by the stress of large debt payments, always stretching your budget thin.",
+
+        (5, 1): "You enjoy many comforts of an upscale life with minimal debt to mar the experience.",
+        (5, 2): "Your lifestyle is a mix of luxury and caution as you enjoy finer things, but also manage a looming debt.",
+        (5, 3): "With an upscale life, you often find that your lavish spending is not quite matched by your income, leading to increasing debts.",
+
+        (6, 1): "Leading a life of luxury, your assets are vast and your worries about debt are few.",
+        (6, 2): "In the world of the well-off, you maneuver between enjoying your wealth and strategically managing your sizable debts.",
+        (6, 3): "While indulging in the finer things, the costs often catch up, making you rethink some of your extravagant choices.",
+
+        (7, 1): "Your immense wealth places you among the elite, living large with almost no financial concerns.",
+        (7, 2): "Surrounded by opulence, you also navigate the complexities of sizable debts, always ensuring they don't overshadow your assets.",
+        (7, 3): "Living the high life comes with its pressures, as your high rolling is occasionally checked by considerable debts.",
+
+        (8, 1): "At the zenith of affluence, your life is an epitome of luxury with negligible financial worries.",
+        (8, 2): "You're the talk of the town, living grandly, though some expenses are funded by strategic debts.",
+        (8, 3): "Your extravagant life, while awe-inspiring, also hides the tightrope you walk, balancing massive debts."
+    }
+
     def __init__(self):
-        self.state: GameState = None
-        self.scheduled_events = []
-        self.player_mission = {}
-        self.player_journal = []
-        self.event_loop = None
-        self.timeline = 0
+        self.diplomacy = 0
+        self.force = 0
+        self.insight = 0
+        self.start_commerce = 0
+
+        self.wealth = 0
+        self.debt = 0
+        self.income = 0
+        self.expenses = 0
+
+        self.health = 15
+        self.notoriety = 1
+        
+        self.name = ""
+        self.location = "At a resting place."
+        self.age = ""
+        self.occupation = ""
+
+        self.relations = ""
+        self.background = ""
+        self.lifestyle = ""
+        self.standing = ""
+
+        self.people = []
+        self.objects = []
+        self.places = []
+
+        self.personality = []
+        self.worldview = []
+        self.socialclass = []
+
+        self.stability = 100
+        self.traits = []
+        self.communication = []
+
+    @property
+    def items(self):
+        print(self.people)
+        print(self.objects)
+        print(self.places)
+        return self.people | self.objects | self.places
+
+    @property
+    def financial_health_str(self):        
+        # Calculate debt ratio
+        ratio = self.debt / self.wealth
+        if ratio < 0.3:
+            debt_ratio = 1  # Low
+        elif ratio < 0.8:
+            debt_ratio = 2  # Medium
+        else:
+            debt_ratio = 3  # High
+
+        return self.financial_health_table[(self.commerce, debt_ratio)]
+
+    @property
+    def strength(self):
+        return round((self.force + self.diplomacy + self.insight)/3)
+    
+    @property
+    def power(self):
+        return self.strength*(1+self.commerce/10+self.notoriety/10)
+
+    @property
+    def notoriety_str(self):
+        return self.notoriety_levels[round(self.notoriety)]
+
+    @property
+    def personality_str(self):
+        if len(self.personality) == []:
+            return ""
+        else:
+            return self.personality['name'] + ": " + self.personality['description']
+        
+    @property
+    def worldview_str(self):
+        if len(self.worldview) == []:
+            return ""
+        else:
+            return self.worldview['name'] + ": " + self.worldview['description']
+        
+    @property
+    def socialclass_str(self):
+        if len(self.socialclass) == []:
+            return ""
+        else:
+            return self.socialclass['name'] + ": " + self.socialclass['description']
+        
+    @property
+    def commerce(self):
+        if (self.wealth > 0):
+            return round(math.log2((self.wealth+900) / 500))
+        else:
+            return 0
+    
+        
+    @property
+    def commerce_delta(self):
+        delta = self.commerce - self.start_commerce
+        if delta < 0:
+            return delta * -1
+        if delta >= 0:
+            return delta
+        
+    @property
+    def sig_people_str(self):
+        try:
+            return '\n'.join([f"{person}: {details['significance']} {details['disposition'].capitalize()}" for person, details in self.people.items() if details.get('significant', False)])
+        except:
+            try:
+                return self.people[0]
+            except:
+                return ""
+        
+    @property
+    def sig_objects_str(self):
+        try:
+            return '\n'.join([f"{obj}: {details['significance']}" for obj, details in self.objects.items() if details.get('significant', False)])
+        except:
+            try:
+                return self.objects[0]
+            except:
+                return ""
+        
+    @property
+    def sig_places_str(self):
+        try:
+            return '\n'.join([f"{place}: {details['significance']}" for place, details in self.places.items() if details.get('significant', False)])
+        except:
+            try:
+                return self.places[0]
+            except:
+                return ""
+        
+    @property
+    def traits_str(self):
+        if len(self.traits) == 1:
+            return self.traits[0]
+        else:
+            return ', '.join([str(self.traits[i]) for i in range(len(self.traits))])
+        
+    @property
+    def communication_str(self):
+        if len(self.communication) == []:
+            return ""
+        else:
+            return ', '.join([str(self.communication[i]) for i in range(len(self.communication))])
+   
+class Journal:
+    def __init__(self):
+        self.counter = 0
+        self.datetime = datetime.now()
+        self.ticker = None
         self.significance = ""
         self.complexity = ""
-        self.s_class = {'status': 'impoverised', 'value': 0}
-        self.player_influence = {'status': 'impoverised', 'value': 0}
-        self.player_dominance = {'status': 'impoverised', 'value': 0}
-        self.player_insight = {'status': 'impoverised', 'value': 0}
-        self.player_wealth = 0
-        self.player_income = 0
-        self.player_com_style = {'status': 'impoverised', 'value': 0}
-        self.player_debt = 0
-        self.player_expenses = 0
-        self.player_personality = ""
-        self.player_name: str = ""
-        self.player_location: str = "Not defined"
-        self.player_age: str = ""
-        self.player_occupation: str = ""
-        self.player_perks: List[str] = []
-        self.player_holdings: List[str] = []
-        self.player_lifestyle: str = ""
-        self.player_relations: str = ""
-        self.player_background: str = ""
-        self.player_journal: List[str] = []
-        self.datetime = datetime.now()
-        self.time_status = 'morning'
-        self.ticker = None
+        self.scheduled: Dict[int, Dict] = {}
+        self.active: Dict[int, Dict] = {}
+        self.completed: Dict[int, Dict] = {}
 
+    @property
+    def readme(self):
+        log = []
+        for event_id, event in self.completed.items():
+            if (event.get('type') == 'background'):
+                item = {
+                    'event_confirmation_id': -1,
+                    'event_challenge_id': -1,
+                    'mission_id': -1,
+                    'datetime': event['triggerdate'],
+                    'story': event['story'],
+                    'character_change': 0,
+                    'standing_change': 0
+                }
+                log.append(item)
+
+            if (event.get('type') == 'event_confirmation'):
+                if event['outcome'] > 0:
+                    outcome = "successful"
+                else:
+                    outcome = "unsuccessful"
+                event_challenge_id = event.get('parent_id',-1)
+                event_challenge = self.completed.get(event_challenge_id)
+                player_option = event_challenge['options'][event_challenge['decision']]['player_option']
+                mission_id = event_challenge.get('parent_id',-1)
+                story = f"""{event_challenge['title']}
+                {event_challenge['location']}, {(self.datetime - event_challenge['triggerdate']).days} days ago:
+
+                {event_challenge['event_body']}
+                
+                You decided to: "{player_option}"
+                
+                You were {outcome}, leading to the following outcome: "{event['event_body']}"
+                """
+                item = {
+                    'event_confirmation_id': event_id,
+                    'event_challenge_id': event_challenge_id,
+                    'mission_id': mission_id,
+                    'datetime': event_challenge['triggerdate'],
+                    'story': story,
+                    'character_change': event['options'][0]['gameplay_effects'].get('character_change'),
+                    'standing_change': event['options'][0]['gameplay_effects'].get('standing_change')
+                }
+
+                log.append(item)
+        return sorted(log, key=lambda x: x['datetime'], reverse=True)
+
+    @property
+    def status(self):  
+        # Check the time
+        hour = self.datetime.time().hour  # get the hour as an integer
+        if 6 <= hour < 12:
+            time_status = 'morning'
+        elif 12 <= hour < 18:
+            time_status = 'afternoon'
+        elif 18 <= hour < 24:
+            time_status = 'evening'
+        else:
+            time_status = 'night'
+        
+        return time_status
+    
+class Game:
+    def __init__(self):
+        self.state: GameState()
+        self.player = Player()
+        self.journal = Journal()
+        self.socket_occupied = False
+    
     def present(self, proposal):
-        print(proposal)
         if self.decide(proposal):
-            next_state = compute_next_state(proposal)
+            next_state = compute_next_state(self,proposal)
+            print("Next state: ", next_state)
             change_state(next_state,self, proposal)
         
     def decide(self, proposal):
-        if proposal['action'] == 'execute_action':
+        if proposal['action'] == 'execute_option':
             return True
-        if proposal['action'] == 'game_init':
-            try:
-                if not self.state.can_init_game:
-                    print("Can't init game")
-                    return False
-                if not proposal['mission']:
-                    print("Mission is empty")
-                    return False
-                if self.complexity == "":
-                    print("Complexity is empty")
-                    return False
-                return True
-            except KeyError:
-                print("KeyError")
-                return False
-        if proposal['action'] == 'app_init':
-            print("game:", self.ticker)
+        if proposal['action'] == 'init_app':
             return True
-        if proposal['action'] == 'stat_change':
+        if proposal['action'] == 'lock_time':
+            return True
+        if proposal['action'] == 'change_stat':
             #if worldview and personality and class not emppty
-            print(proposal)
-
             if proposal and 'values' in proposal:
                 values = proposal['values']
-                if all(key in values and values[key] != "" for key in ['worldview', 'personality', 'class']):
+                if all(key in values and values[key] != "" for key in ['worldview', 'personality', 'socialclass']):
                     return True
             return False
         if proposal['action'] == 'change_speed':
             try:
-                if not self.state.can_change_speed:
-                    print(self.state)
+                if not self.state.can_change_speed():
+                    socketio.emit('stop_time')
                     return False
                 # if speed is not int
                 if not isinstance(proposal['speed'], float):
@@ -94,60 +321,34 @@ class Game:
                 print("KeyError")
                 return False
         if proposal['action'] == 'wait_for_input':
-            try:
-                # if self.next_event is an empty object return true
-                if self.next_event == {}:
-                    return True
-                return False
+            return True
 
-            except KeyError:
-                print("KeyError")
-                return False
-
-        if proposal['action'] == 'wizard_to_story':
-            try:
-                # Validate player name (can't be empty)
-                if not proposal['player_state']['name']:
-                    print("Name is empty")
-                    return False
-                
-                # Validate occupation (can't be empty)
-                if not proposal['player_state']['occupation']:
-                    print("Occupation is empty")
-                    return False
-
-                # Validate world background (can't be empty)
-                if not proposal['player_state']['age']:
-                    print("Age is empty")
-                    return False
-                return True
-            
-            
-            except KeyError:  # Handle cases where expected keys are not present
-                print("KeyError")
-                return False
+        if proposal['action'] == 'load_game':
+            return True
 
 
-def compute_next_state(accepted_proposal: Dict):
-    if (accepted_proposal['action'] == "app_init"):
-        return WIZARD_WAIT
-    if (accepted_proposal['action'] == "execute_action"):
-        return CALCULATE_RESPONSE
-    if (accepted_proposal['action'] == "wizard_to_story"):
+def compute_next_state(game,accepted_proposal: Dict):
+    if (accepted_proposal['action'] == "init_app"):
+        return WIZARD_WAITING
+    if (accepted_proposal['action'] == "execute_option"):
+        return RESPONSE_COMPUTING
+    if (accepted_proposal['action'] == "lock_time"):
+        return TIME_LOCKED
+    if (accepted_proposal['action'] == "load_game"):
         return GAME_LOADING
-    if (accepted_proposal['action'] == "stat_change"):
-        return WIZARD_CALCULATE
-    if (accepted_proposal['action'] == "game_init"):
-        return GAME_INIT
+    if (accepted_proposal['action'] == "change_stat"):
+        return WIZARD_UPDATING
     if (accepted_proposal['action'] == "wait_for_input"):
-        return GAME_WAIT
+        if not game.journal.active and not any(event['type'] == 'mission_select' for event_id, event in game.journal.scheduled.items()):
+            return MISSION_COMPUTING
+        else:
+            odds_events = (0.8)**len(game.journal.scheduled)
+            odds_concepts = (0.8)**(len(game.player.items)/8)
+            return random.choices([EVENT_COMPUTING,CONCEPT_COMPUTING], weights=[odds_events, odds_concepts], k=1)[0]
     if (accepted_proposal['action'] == "change_speed"):
         if accepted_proposal['speed'] >= 1.0:
             return GAME_TICKING
         if accepted_proposal['speed'] < 1.0:
-            print("Pause state")
-            return GAME_WAIT
+            return GAME_PAUSING
     else:
         return ("Invalid")
-
-game = Game()

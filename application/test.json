@@ -1,20 +1,29 @@
-{
-    "action_analysis": "High risk and high reward echo through your mind as you stand before the ancient grove. The dense, intertwined routes stretch ominously before you. Bypassing the lengthy and potentially safer route can catapult you directly to the lost city, offering a significant advantage in time. The air thickens with the scent of the unknown, and you feel the weight of the decision on your shoulders. Success could be monumental; failure, however, could lead to increased resource expenditure, lost time, and exposure to unknown perils lurking within the grove's shrouded depths.",
-    "likelihood_positive_outcome": 40,
-    "critical_positive_outcome": {
-        "Player message": "As the leaves crunch softly under your feet, a sense of intuition guides your path. You find a hidden path leading directly to the lost city, the towering spires visible through the clearing, bathed in the light of the sinking sun. Relief and exhilaration flood through you as you realize the extensive amount of time saved, the city's secrets now within arm's reach.",
-        "requires_urgent_player_actions": false
-    },
-    "positive_outcome": {
-        "Player message": "You embark upon the journey with caution, navigating through the shortcut with minimal issues. The flora whispers secrets of ancient times as you pass, and you emerge on the other side, saving some precious time. The city now draws nearer, its silhouette beckoning under the velvet sky.",
-        "requires_urgent_player_actions": false
-    },
-    "negative_outcome": {
-        "Player message": "The labyrinthine grove confounds your senses. Despite your best efforts, you find yourself lost within the entangled routes, each turn leading to more uncertainty. Time slips through your fingers like sand, as resources dwindle, the city’s allure now a distant beacon amidst the twisted boughs. The path forward remains shrouded, demanding further determination and resilience.",
-        "requires_urgent_player_actions": true
-    },
-    "critical_negative_outcome": {
-        "Player message": "Darkness descends like a shroud as you venture deeper into the grove. Unforeseen dangers ambush from the shadows, causing substantial loss of resources and time. The whispers of the ancient trees now sound like mocking echoes, as you grapple with the reality of the perilous journey. The elusive city fades into a distant dream, as the grove tightens its perilous embrace, demanding heightened resolve to navigate the encircling dangers.",
-        "requires_urgent_player_actions": true
-    }
+{'name': 'My Empire', 'children': [
+        {'name': 'De Vijverhof', 'type': 'Location', 'significance': 'This is your modest yet charming residence located near the picturesque lake of De Vijver. It serves as both your sanctuary and base of operations.'
+        },
+        {'name': 'Het Spiekerhuisje', 'type': 'Location', 'significance': 'A small cottage nestled amidst the rolling hills of your estate. This humble abode provides solace after long days spent trading and exploring new lands.'
+        },
+        {'name': 'De Gouda Waag', 'type': 'Location', 'significance': 'As a prominent merchant, this iconic building represents the heart of your business dealings. Its towering clock tower stands tall over the bustling marketplace below, reminding you of the ticking clock of opportunity.'
+        },
+        {'name': 'De Keizersgracht', 'type': 'Location', 'significance': "One of Amsterdam's most famous waterways, it connects you to the city's vibrant center and its many opportunities. As you sail along these historic waters, imagine the countless ships that have traversed here before you."
+        },
+        {'name': 'Your journal', 'type': 'Object', 'significance': 'As a logician, you meticulously document your thoughts, observations, and plans in this journal. It serves as a repository of your ideas and a tool for organizing your thoughts.'
+        },
+        {'name': 'Your compass', 'type': 'Object', 'significance': 'A trusted companion on your travels, this compass helps guide you through unfamiliar territories and uncharted waters. Without it, getting lost would be easy.'
+        },
+        {'name': 'Your map collection', 'type': 'Object', 'significance': 'With your thirst for exploration and discovery, you have amassed a vast collection of maps detailing unexplored regions and hidden treasures. They serve as guides to untold adventures and sources of inspiration.'
+        },
+        {'name': 'Jacob van der Meer', 'type': 'Entity', 'significance': 'As a fellow entrepreneur like you, Jacob has faced similar challenges and successes in his endeavors. He is known for his innovative ideas and willingness to take risks, making him a valuable ally or potential competitor.'
+        },
+        {'name': 'Maria de Wijk', 'type': 'Entity', 'significance': 'A wealthy widow who shares your love for art and culture. She frequently hosts lavish parties where you can showcase your latest acquisitions and network with other influential individuals. However, her affinity for extravagance could also lead to dangerous debt traps.'
+        },
+        {'name': 'Jan van den Boek', 'type': 'Entity', 'significance': 'An ambitious young artist seeking recognition and patronage. His talent and passion inspire you, but he sometimes struggles with self-doubt and financial instability. By supporting him, you might not only contribute to the growth of the arts scene but also establish connections within the elite circles.'
+        },
+        {'name': 'Willem van Dordrecht', 'type': 'Entity', 'significance': 'A powerful merchant rival who constantly seeks ways to undermine your businesses. He is cunning and ruthless, but also highly respected among the elite circles. Keep a close eye on him, as any misstep could cost you everything.'
+        },
+        {'name': 'Sophie van Leeuwen', 'type': 'Entity', 'significance': 'A renowned historian and scholar who shares your fascination with the past. Her vast knowledge and insights provide valuable perspectives on the events shaping the world around you. Through her circle of intellectuals, she can open doors to exclusive gatherings and opportunities.'
+        },
+        {'name': 'Lena van der Zee', 'type': 'Entity', 'significance': 'A skilled spy and agent working undercover for the Dutch East India Company. With her sharp mind and ability to blend seamlessly into society, she gathers crucial information about foreign powers and their intentions. Though she operates in secrecy, her intelligence can prove vital to your strategic decisions.'
+        }
+    ]
 }

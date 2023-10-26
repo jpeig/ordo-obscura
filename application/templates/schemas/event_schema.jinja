@@ -1,0 +1,133 @@
+{
+    "type": "object",
+    "description": "This is an event for the active mission.",
+    "properties": {
+        "title": {"type": "string"},
+        "location": {"type": "string"},
+        "trigger_time_of_day": {
+            "type": "string",
+            "enum": ["morning", "afternoon", "evening", "night"]
+        },
+        "event_body": {
+            "type": "string",
+            "description": "keep the player event succinct."
+        },
+        {% for key in items %}
+                "{{ key }}": {
+            "type": "object",
+            "properties": {
+                "player_option": {"type": "string", "description": "write in the second perspective ('you') and write in the active form"},
+                "challenges": {
+                    "type": "object",
+                    "description": "the challenges the player is required to pass - be as strict/accurate as possible",
+                    "properties": {
+                        "perform_payment": {
+                            "type": "boolean",
+                            "description": "whether or not (True/False) the player is required to pay or bribe or transfer money in order to proceed"
+                        },
+                        "perform_insight_check": {
+                            "type": "boolean",
+                            "description": "whether or not (True/False) the player should roll 'insight' in order to determine success or failure for this action"
+                        },
+                        "perform_force_check": {
+                            "type": "boolean",
+                            "description": "whether or not (True/False) the player should roll 'force' in order to determine success or failure for this action"
+                        },
+                        "perform_diplomacy_check": {
+                            "type": "boolean",
+                            "description": "whether or not (True/False) the player should roll 'diplomacy' in order to determine success or failure for this action"
+                        }
+                    }
+                },
+                "success_effects": {
+                    "type": "object",
+                    "properties": {
+                        "narrative_effects": {
+                            "type": "string",
+                            "description": "Write a subsequent event_body / narrative about what happens next, assuming they succeeded (write in second perspective, avoid gameplay jargon)"
+                        },
+                        "gameplay_effects": {
+                            "type": "object",
+                            "description": "ensure that the gameplay changes strictly align with the narrative change - just provide a True or False per gameplay attribute",
+                            "properties": {
+                                "item_gained": {
+                                    "type": "boolean",
+                                    "description": "whether or not (True/False) the player gains possession over a specific item as a result of this action"
+                                },
+                                "direct_wealth_increase": {
+                                    "type": "boolean",
+                                    "description": "whether or not (True/False) the player increases its direct 'wealth' as a result of this action"
+                                },
+                                "notoriety_increase": {
+                                    "type": "boolean",
+                                    "description": "whether or not (True/False) the 'notoriety' of the player increases as a result of this action"
+                                },
+                                "standing_change": {
+                                    "type": "boolean",
+                                    "description": "whether or not (True/False) the 'standing' of the player changes as a result of this action"
+                                },
+                                "character_change": {
+                                    "type": "boolean",
+                                    "description": "whether or not (True/False) the 'personality' of the player changes as a result of this action"
+                                }
+                            }
+                        }
+                    }
+                },
+                "failure_effects": {
+                    "type": "object",
+                    "properties": {
+                        "narrative_effects": {
+                            "type": "string",
+                            "description": "Write a subsequent event_body / event narrative about what happens next, assuming they failed (write in second perspective, avoid gameplay jargon)"
+                        },
+                        "gameplay_effects": {
+                            "type": "object",
+                            "description": "Ensure that the gameplay changes strictly align with the narrative change - just provide a True or False per gameplay attribute",
+                            "properties": {
+                                "item_lost": {
+                                    "type": "boolean",
+                                    "description": "whether or not (True/False) the player loses possession over a specific item as a result of this action"
+                                },
+                                "direct_wealth_decrease": {
+                                    "type": "boolean",
+                                    "description": "whether or not (True/False) the player decreases its direct 'wealth' as a result of this action"
+                                },
+                                "notoriety_increase": {
+                                    "type": "boolean",
+                                    "description": "whether or not (True/False) the 'notoriety' of the player increases as a result of this action"
+                                },
+                                "standing_change": {
+                                    "type": "boolean",
+                                    "description": "whether or not (True/False) the 'standing' of the player changes as a result of this action"
+                                },
+                                "character_change": {
+                                    "type": "boolean",
+                                    "description": "whether or not (True/False) the 'character' of the player changes as a result of this action"
+                                }
+                            }
+                        }
+                    }
+                },
+                "internal_dialogue": {
+                    "type": "string",
+                    "description": "write a line of internal dialogue where the player ponders the consequences of the action in accordance with the communication style and character of the player"
+                }
+            }
+        },
+        {% endfor %}
+        "trigger_conditionals": {
+            "type": "object",
+            "properties": {
+                "must_trigger_now": {"type": "boolean"},
+                "must_trigger_today": {"type": "boolean"},
+                "must_trigger_tomorrow": {"type": "boolean"},
+                "must_trigger_this_week": {"type": "boolean"},
+                "must_trigger_in_morning": {"type": "boolean"},
+                "must_trigger_in_afternoon": {"type": "boolean"},
+                "must_trigger_in_evening": {"type": "boolean"},
+                "must_trigger_at_night": {"type": "boolean"}
+            }
+        }
+    }
+}

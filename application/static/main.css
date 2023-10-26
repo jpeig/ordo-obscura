@@ -3,9 +3,19 @@ body {
     color: white;
     display: flex;
     justify-content: space-between;
-    font-family: Arial, sans-serif;
+    font-family: 'Asul', serif;
+    letter-spacing: 0.04em;
     margin: 0;
     box-sizing: border-box;
+}
+
+/* Add some basic styling */
+circle {
+    stroke: #000;
+    stroke-width: 1.5;
+}
+line {
+    stroke: #aaa;
 }
 
 #fact-sheet {
@@ -16,13 +26,15 @@ body {
 position: absolute;
 right: 0px;
 bottom: 20px;
+text-transform: initial;
+letter-spacing: .1em;
 }
 
-#addAsset, #addPerk, #addPlace {
+#addObject, #addPerson, #addPlace {
 right: -35px;
 }
 
-#perksList, #assetsList {
+#peopleList, #objectsList {
 margin-bottom: 20px;
 }
 
@@ -37,13 +49,12 @@ margin-bottom: 10px;
 body,
 .mdl-layout__header,
 .mdl-card {
-    background: #121212;
+    background: radial-gradient(#282626, #121212);
     /* Dark Grey */
 }
 
 .mdl-layout {
     background: radial-gradient(circle at 50% 50%, #ffffff, #fdfdfc, #f6f6f6, #ededed, #e3e3e3, #d1d1d1, #bcbcbc, #a7a7a7);
-
 }
 
 div#loader {
@@ -120,10 +131,6 @@ div#loader {
 
 .header {
     cursor: move;
-}
-
-body {
-    font-family: 'Roboto', sans-serif;
 }
 
 .mdl-textfield__input {
@@ -276,7 +283,7 @@ h3#date {
 }
 
 h3#year {
-    width: 140px;
+    width: 160px;
 }
 
 input#timeline-bar::-webkit-slider-thumb {
@@ -318,10 +325,13 @@ input#timeline-bar.is-lowest-value::-webkit-slider-thumb {
 
 .timeline_container {
     display: flex;
-    justify-content: center;
     height: 0px;
+    z-index: 999;
+    flex-direction: row;
+    align-content: center;
+    justify-content: center;
+    align-items: center;
 }
-
 .dashboard-container {
     pointer-events: none;
 
@@ -333,14 +343,13 @@ input#timeline-bar.is-lowest-value::-webkit-slider-thumb {
   }
 
 
-.timeline h3 {
-    color: rgb(30 30 0 / 70%);
+  .timeline h3 {
+    color: rgb(255 255 255);
     font-family: 'MedievalSharp', cursive;
     background-blend-mode: multiply;
     margin-bottom: 0px;
     font-size: 32px;
 }
-
 
 /* CSS for centering the dashboard */
 .dashboard-container {
@@ -351,9 +360,61 @@ input#timeline-bar.is-lowest-value::-webkit-slider-thumb {
     width: 100%;
 }
 
-.timeline {
+
+.node circle {
+    fill: #fff;
+    stroke: steelblue;
+    stroke-width: 3px;
+  }
+
+.textwrap div{
+    cursor: pointer;
+    display: flex;
+    text-align: center;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    color: black;
+    font-size: 18px;
+}
+  
+  .node text {
+    font: 12px sans-serif;
+  }
+  
+  .link {
+    fill: none;
+    stroke: rgb(58, 55, 0);
+    stroke-width: 6px;
+    opacity: 0.2;
+    stroke-linecap: round;
+    stroke-dasharray: 1000;
+    stroke-dashoffset: 1000;
+    animation: dash 2s linear forwards;
+}
+
+@keyframes dash {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+
+#d3_container{
+        display: flex;
+        justify-content: center;
+        height: 0;
+}
+
+#d3_container svg {
     position: fixed;
-    top: 50px;
+}
+
+.timeline {
+    top: -100px;
+}
+
+#stat_menu{
+    overflow: visible;
 }
 
 .mdl-cell--4-offset {
@@ -380,9 +441,14 @@ span.stat_descriptor {
     font-size: small;
 }
 
+#stat_menu span.stat_descriptor {
+    font-size: 42px;
+    padding-top: 22px;
+}
+
 .mdl-slider__container {
     width: 75%;
-    margin-bottom: 15px;
+    margin-bottom: 5px;
 }
 
 .timeline .mdl-card__actions {
@@ -430,9 +496,24 @@ div.stat {
     background-color: #00ff90;
 }
 
+.icon-row{
+    display: flex;
+    flex-direction: row;
+}
+
+.mdl-tooltip b {
+    margin-top: 5px;
+    display: block;
+}
+
 .obscura-card {
-    width: 640px;
+    width: 800px;
     position: absolute;
+}
+
+.obscura-card i.material-icons.md-16 {
+    display: block;
+    padding: 5px;
 }
 
 .obscura-card .mdl-card__actions .mdl-button {
@@ -440,6 +521,7 @@ div.stat {
     padding: 8px;
     padding-left: 6%;
     padding-right: 6%;
+    height: auto;
 }
 
 .obscura-card-wide {
@@ -473,6 +555,10 @@ span.stat_descriptor {
     justify-content: space-between;
 }
 
+.button-container .mdl-button.mdl-button--colored {
+    color: rgb(255 255 255);
+}
+
 .story {
     width: 30%;
     padding: 8px;
@@ -481,6 +567,79 @@ span.stat_descriptor {
 .mdl-tooltip.is-active {
     font-size: 12px;
     text-align: inherit;
+
+}
+
+.bottom-button_container {
+    display: flex;
+    justify-content: center;
+}
+
+.top-button_container {
+    display: flex;
+    justify-content: center;
+    margin-top: -50px;
+}
+
+#stat_menu #stat_force, #stat_menu #stat_diplomacy, #stat_menu #stat_insight {
+    /* background: rgba(58, 55, 0, 0.54); */
+    width: 100px;
+    height: 100px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 20px;
+    border-radius: 120px;
+    /* box-shadow: rgba(50, 50, 93, 0.25) 0px 6px 12px -2px, rgba(0, 0, 0, 0.3) 0px 3px 7px -3px; */
+}
+
+#stat_menu #stat_diplomacy {
+    /* background: white; */
+    color: rgb(88 105 69);
+}
+
+#stat_menu #stat_force {
+    /* background: white; */
+    color: rgb(114 76 46);
+    margin-top: -20px;
+}
+
+#stat_menu #stat_insight {
+    /* background: white; */
+    color: rgb(69 100 116)
+}
+
+
+
+
+div#button_container {
+    display: flex;
+    height: 865px;
+    width: 600px;
+    margin-left: -300px;
+    margin-top: -400px;
+    align-content: stretch;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+#ticker .mdl-tooltip {
+    margin-top: initial!important;
+    margin-left: initial!important;
+    top: initial!important;
+    left: initial!important;
+    translate: -50% 30px;
+    min-width: 100px;
+
+}
+
+.top-button_container .mdl-tooltip {
+    margin-top: initial!important;
+    margin-left: initial!important;
+    top: initial!important;
+    left: initial!important;
+    translate: 0% 140px;
+    min-width: 200px;
 }
 
 .mdl-card__content {
@@ -527,11 +686,11 @@ span.stat_descriptor {
     background-image: url('https://cdn.britannica.com/41/3341-050-825E2B57/The-Creation-of-Adam-ceiling-fresco-Sistine.jpg');
 }
 
-#mission-event>.mdl-card__content {
+#event-challenge>.mdl-card__content, #confirmation-event>.mdl-card__content {
     padding-top: 32px;
 }
 
-#mission-event>.mdl-card__title {
+#event-challenge>.mdl-card__title, #confirmation-event>.mdl-card__title {
     background-image: url('https://upload.wikimedia.org/wikipedia/commons/e/ef/16th-century_unknown_painters_-_The_Battle_of_the_Ticino_-_WGA23949.jpg?20110613175958');
     height: 176px;
 }

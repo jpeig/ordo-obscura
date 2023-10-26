@@ -26,14 +26,14 @@ document.addEventListener("DOMContentLoaded", function () {
                             mission_picker();
                         }
 
-                        if (node.id == "ticker") {
+                        if (node.id == "button_container") {
+                            console.log("its working")
                             time_boot();
                         }
 
-                        if (node.id == "mission-event") {
-                            mission_event();
+                        if (node.id.startsWith("event-")) {
+                            event_click_handler();
                         }
-
                     }
                 });
             }
@@ -110,11 +110,12 @@ document.addEventListener("DOMContentLoaded", function () {
 
     }
 
-    function mission_event() {
+    function event_click_handler() {
         $(".action").click(function () {
-            selected_action = $(this).attr('id')
-            selected_action = parseInt(selected_action.split("-")[1])-1
-            socket.emit('execute_action', actions[selected_action]); 
+            selected_option = $(this).attr('id')
+            selected_option_id = parseInt(selected_option.split("-")[1])-1
+            event_id = $(this).parents('[event-id]').attr('event-id');
+            socket.emit('execute_option', event_id, selected_option_id); 
           })   
     }
 
@@ -138,9 +139,10 @@ document.addEventListener("DOMContentLoaded", function () {
         })
         
         $("#start-story").click(function () {
-          selected_mission = $("#mission-picker .selected").attr('id')
-            selected_mission = parseInt(selected_mission.split("-")[1])-1
-            socket.emit('game_init', stories[selected_mission]);    
+            selected_mission = $("#mission-picker .selected").attr('id')
+            mission_id = parseInt(selected_mission.split("-")[1])-1
+            event_id = $(this).parents('[event-id]').attr('event-id');
+            socket.emit('execute_option', event_id, mission_id);    
         })
     }
 

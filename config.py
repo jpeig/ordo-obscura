@@ -1,16 +1,17 @@
 class Config:
-    REDIS_URI = "redis://:password@localhost:6379/0"
-    OOB_HOST_WS = 'localhost:5005'
-    OOB_HOST_HTTP = 'localhost:5000'
+    REDIS_URL = "redis://redis:6379/0"
+    RQ_REDIS_URL = REDIS_URL
+    OOB_HOST_WS = 'host.docker.internal:5005'
+    OOB_HOST_HTTP = 'host.docker.internal:5000'
     OOB_URI_WS = f'ws://{OOB_HOST_WS}/api/v1/stream'
     OOB_URI_HTTP = f'http://{OOB_HOST_HTTP}/api/v1/generate'
     DEBUG = True
-    HOST = '127.0.0.1'
+    HOST = '0.0.0.0'
     PORT = 8001
-    SKIP_GEN_MISSION = True
-    SKIP_GEN_NARRATIVE = True
+    SKIP_GEN_MISSION = False
+    SKIP_GEN_NARRATIVE = False
     SKIP_GEN_EVENT = False
-    SKIP_GEN_STATE = True
+    SKIP_GEN_STATE = False
     SKIP_VAL_NARRATIVE = """{
     "player_background": "As an aspiring entrepreneur living during the Dutch Golden Age, you grew up surrounded by the opulent splendor of the Baroque era. Born in a small village near the river Vecht, you were captivated by tales of adventure and wealth brought back by traders returning from faraway lands.",
     "player_lifestyle": "Now settled in Amsterdam, you spend your days navigating the intricate web of politics, commerce, and diplomacy that defined the era. Your home, De Vijverhof, serves as both your refuge and hub of activity, filled with books, maps, and curiosities collected from your travels.",

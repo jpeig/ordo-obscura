@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, abort, request, jsonify, redirect, url_for, g, current_app as app
 from jinja2 import TemplateNotFound, Template
-from . import socketio
+from . import socketio, rq, emitter, redis
+from .models import *
 import os
 from typing import Dict
 from config import Config
@@ -18,94 +19,185 @@ import requests
 from functools import partial
 from threading import Timer
 from datetime import datetime, timedelta, time
+from rq import Worker
 
 URI_WS = Config.OOB_URI_WS
 state = Blueprint('state', __name__,
                         template_folder='templates',
                         static_folder="static")
 
+high_queue = rq.get_queue('high')
+default_queue = rq.get_queue('default')
+
+@emitter.on('accepted_proposal')
+def handle_accepted_proposal(proposal):
+    next_state = compute_next_state(proposal)
+    if proposal.get('queue') != None:
+        print("Queued state: ", next_state)
+        Game().state = next_state
+        if (proposal.get('queue') == 'default'):
+            default_queue.enqueue(next_state.enqueue, args=(proposal))
+        elif (proposal.get('queue') == 'high'):
+            high_queue.enqueue(next_state.enqueue, args=(proposal))
+    else:
+        print("Next state: ", next_state)
+        Game().state = next_state
+        next_state.transition(proposal)
+      
+def compute_next_state(accepted_proposal: Dict):
+    if (accepted_proposal['action'] == "init_app"):
+        return WIZARD_WAITING()
+    if (accepted_proposal['action'] == "execute_option"):
+        return RESPONSE_COMPUTING()
+    if (accepted_proposal['action'] == "lock_time"):
+        return TIME_LOCKED()
+    if (accepted_proposal['action'] == "load_game"):
+        return GAME_LOADING()
+    if (accepted_proposal['action'] == "change_stat"):
+        return WIZARD_UPDATING()
+    if (accepted_proposal['action'] == "select_mission"):
+        return MISSION_COMPUTING()
+    if (accepted_proposal['action'] == "compute_event"):
+        return EVENT_COMPUTING()
+    if (accepted_proposal['action'] == "compute_concept"):
+        return CONCEPT_COMPUTING()
+    if (accepted_proposal['action'] == "change_speed"):
+        if accepted_proposal['speed'] >= 1.0:
+            return GAME_TICKING()
+        if accepted_proposal['speed'] < 1.0:
+            return GAME_PAUSING()
+    else:
+        return ("Invalid")
+
 class GameState():
-    def can_init_game():
+    def can_init_game(self):
         return False
-    def can_change_speed():
+    def can_change_speed(self):
         return True
-    def transition(game, accepted_proposal=None):
+    def transition(self, game, accepted_proposal=None):
         print("Transitioning to next state")
+    def enqueue(self, game, accepted_proposal):
+        print("Enqueuing next state")
 
 class WIZARD_WAITING(GameState):
-    def can_init_game():
+    def can_init_game(self):
         return True
-    def can_change_speed():
+    def can_change_speed(self):
         return False
-    def transition(game, accepted_proposal=None):
-        asyncio.run(stop_ticker(game))
+    def transition(self, accepted_proposal=None):
+        journal = Journal()
+        player = Player()
+
+        journal.counter = 0
+        journal.datetime = datetime.now()
+        journal.ticker = None
+        journal.scheduled: Dict[int, Dict] = {}
+        journal.active: Dict[int, Dict] = {}
+        journal.completed: Dict[int, Dict] = {}
+
+        player.diplomacy = 0
+        player.force = 0
+        player.insight = 0
+        player.start_commerce = 0
+
+        player.wealth = 0
+        player.debt = 0
+        player.income = 0
+        player.expenses = 0
+
+        player.health = 15
+        player.notoriety = 1
+        
+        player.name = ""
+        player.location = "At a resting place."
+        player.age = ""
+        player.occupation = ""
+
+        player.relations = ""
+        player.background = ""
+        player.lifestyle = ""
+        player.standing = ""
+
+        player.people = []
+        player.objects = []
+        player.places = []
+
+        player.personality = []
+        player.worldview = []
+        player.socialclass = []
+
+        player.stability = 100
+        player.traits = []
+        player.communication = []
     
 class WIZARD_UPDATING(GameState):
-    def can_init_game():
+    def can_init_game(self):
         return True
-    def can_change_speed():
+    def can_change_speed(self):
         return False
-    def transition(game, accepted_proposal=None):
-        calculate_stats(game, accepted_proposal)
+    def transition(self, accepted_proposal=None):
+        calculate_stats(accepted_proposal)
 
 class TIME_LOCKED(GameState):
-    def can_init_game():
+    def can_init_game(self):
         return False
-    def can_change_speed():
+    def can_change_speed(self):
         return False
-    def transition(game, accepted_proposal):
+    def transition(self, accepted_proposal):
         print("Time locked")
         try:
             loop = asyncio.get_event_loop()
-            loop.create_task(stop_ticker(game))
+            loop.create_task(stop_ticker())
         except RuntimeError:
             # If no event loop is running, start one temporarily
-            asyncio.run(stop_ticker(game))
+            asyncio.run(stop_ticker())
 
 class GAME_LOADING(GameState):
-    def can_init_game():
+    def can_init_game(self):
         return True
-    def transition(game, accepted_proposal):
-        load_game(game, accepted_proposal)
-        launch_game_ui(game)
+    def transition(self, accepted_proposal):
+        load_game(accepted_proposal)
+        launch_game_ui()
 
 class RESPONSE_COMPUTING(GameState):
-    def transition(game, accepted_proposal: Dict):
-        compute_event_response(game, accepted_proposal)
-        socketio.emit('remove_event_modal', {'event_id': accepted_proposal['event_id']})
+    def transition(self, accepted_proposal: Dict):
+        complete_event(accepted_proposal)
 
 class GAME_PAUSING(GameState):
-    def transition(game, accepted_proposal):
+    def transition(self, accepted_proposal):
         try:
             loop = asyncio.get_event_loop()
-            loop.create_task(stop_ticker(game))
+            loop.create_task(stop_ticker())
         except RuntimeError:
             # If no event loop is running, start one temporarily
-            asyncio.run(stop_ticker(game))
+            asyncio.run(stop_ticker())
 
 class MISSION_COMPUTING(GameState):
-    def transition(game, accepted_proposal):
-        compute_mission(game)
+    def enqueue(self, accepted_proposal):
+        print("computing mission")
+        compute_mission()
 
 class EVENT_COMPUTING(GameState):
-    def transition(game, accepted_proposal):
-        compute_event(game)
+    def enqueue(self, accepted_proposal):
+        compute_event()
 
 class CONCEPT_COMPUTING(GameState):
-    def transition(game, accepted_proposal):
-        compute_concept(game)
+    def enqueue(self, accepted_proposal):
+        compute_concept()
 
 class REFLECT_COMPUTING(GameState):
-    def transition(game, accepted_proposal):
+    def transition(self, accepted_proposal):
         return
     
 class GAME_TICKING(GameState):
-    def transition(game, accepted_proposal):
+    def transition(self, accepted_proposal):
         try:
+            print("Create loop")
             loop = asyncio.get_event_loop()
-            loop.create_task(start_ticker(game, accepted_proposal['speed']))
+            loop.create_task(start_ticker(accepted_proposal['speed']))
         except RuntimeError:
-            asyncio.run(start_ticker(game, accepted_proposal['speed']))
+            print("RuntimeError")
+            asyncio.run(start_ticker(accepted_proposal['speed']))
 
 # class RepeatingTimer(Timer):
 #     def run(self):
@@ -113,7 +205,7 @@ class GAME_TICKING(GameState):
 #             self.function(*self.args, **self.kwargs)
 
 
-def calculate_stats(game, accepted_proposal):
+def calculate_stats(accepted_proposal):
     # Extract people and assets dynamically
     worldview_key = accepted_proposal['values']['worldview']
     socialclass_key = accepted_proposal['values']['socialclass']
@@ -134,7 +226,7 @@ def calculate_stats(game, accepted_proposal):
     debt_score = round(commerce * (socialclass['debt']/socialclass['commerce']))
     commerce = round(commerce)
 
-    game.player.traits = [
+    Player().traits = [
         worldview['pos_trait'],
         socialclass['pos_trait'],
         personality['pos_trait'],
@@ -143,7 +235,7 @@ def calculate_stats(game, accepted_proposal):
         personality['neg_trait']
     ]
 
-    game.player.communication = [
+    Player().communication = [
         worldview['communication'].split(', ')[0],
         socialclass['communication'].split(', ')[0],
         personality['communication'].split(', ')[0],
@@ -152,27 +244,27 @@ def calculate_stats(game, accepted_proposal):
         personality['communication'].split(', ')[1]
     ]    
 
-    game.player.force = force
-    game.player.diplomacy = diplomacy
-    game.player.insight = insight
+    Player().force = force
+    Player().diplomacy = diplomacy
+    Player().insight = insight
 
     modifier = random.uniform(0.9500, 1.0500)
 
-    game.player.worldview = worldview
-    game.player.socialclass = socialclass
-    game.player.personality = personality
+    Player().worldview = worldview
+    Player().socialclass = socialclass
+    Player().personality = personality
 
-    game.player.wealth = round(500*(2^commerce)*modifier-900)
-    game.player.debt = round(500*(2^debt_score)*modifier-900)
+    Player().wealth = round(500*(2^commerce)*modifier-900)
+    Player().debt = round(500*(2^debt_score)*modifier-900)
 
-    print(f"Player wealth: {game.player.wealth}")
-    print(f"Player debt: {game.player.debt}")
+    print(f"Player wealth: {Player().wealth}")
+    print(f"Player debt: {Player().debt}")
     
 
-    socketio.emit('update_statmenu', {'force': game.player.force, 'diplomacy': game.player.diplomacy, 'insight': game.player.insight, 'wealth': str(game.player.wealth)+" fl.", 'debt': str(game.player.debt)+" fl."})
+    socketio.emit('update_statmenu', {'force': Player().force, 'diplomacy': Player().diplomacy, 'insight': Player().insight, 'wealth': str(Player().wealth)+" fl.", 'debt': str(Player().debt)+" fl."})
 
 
-def compute_concept(game):
+def compute_concept():
     print("computing concept")
     
     # compute around concept
@@ -191,88 +283,123 @@ def compute_concept(game):
 
     # compute actions
 
-    game.present({'action': 'wait_for_input'})
 
-
-def launch_game_ui(game):
+def launch_game_ui():
     ticker_template = render_template(
     'ticker.html', 
-    time = game.journal.datetime.strftime('%H:%M'),
-    date = game.journal.datetime.strftime('%d.%m'),
-    year = game.journal.datetime.strftime('%Y AD')
+    time = Journal().datetime.strftime('%H:%M'),
+    date = Journal().datetime.strftime('%d.%m'),
+    year = Journal().datetime.strftime('%Y AD')
     )
     socketio.emit('blank_canvas', {'new_html_content': ticker_template})
-    socketio.emit('update_statmenu', {'force': game.player.force, 'diplomacy': game.player.diplomacy, 'insight': game.player.insight, 'wealth': str(game.player.wealth)+" fl.", 'debt': str(game.player.debt)+" fl."})
+    socketio.emit('update_statmenu', {'force': Player().force, 'diplomacy': Player().diplomacy, 'insight': Player().insight, 'wealth': str(Player().wealth)+" fl.", 'debt': str(Player().debt)+" fl."})
     
     json_schema_narrative_state = get_jsonschema('narrative_state_schema.jinja')
     
     if Config.SKIP_GEN_NARRATIVE:
         state_narrative = json.loads(Config.SKIP_VAL_NARRATIVE)
     else:
-        prompt = generate_state_narrative(game)
-        result = asyncio.run(get_ws_result(game, prompt, json_schema_narrative_state))
-        game.socket_occupied = False
+        prompt = generate_state_narrative()
+        result = asyncio.run(get_ws_result(prompt, json_schema_narrative_state))
         state_narrative = json.loads(result)
     
-    game.player.standing = state_narrative['player_standing']
-    game.player.lifestyle = state_narrative['player_lifestyle']
+    Player().standing = state_narrative['player_standing']
+    Player().lifestyle = state_narrative['player_lifestyle']
 
     background = {
         'type': 'background',
-        'story': game.player.background,
-        'triggerdate': game.journal.datetime - timedelta(days=(int(365.24*game.player.age*0.2)))
+        'story': Player().background,
+        'triggerdate': Journal().datetime - timedelta(days=(int(365.24*Player().age*0.2)))
     }
 
-    game.journal.completed['background']= background
+    Journal().completed['background']= background
 
-    game.present({'action': 'wait_for_input'})
+    asyncio.run(action_generator())
 
-def change_state(next_state, game, accepted_proposal: Dict):
-    game.state = next_state
-    next_state.transition(game, accepted_proposal)
+def has_running_jobs(queue_name):
+    # Get all the workers
+    workers = Worker.all(connection=default_queue.connection)
+    
+    # Filter workers based on the queue_name
+    relevant_workers = [worker for worker in workers if queue_name in worker.queue_names()]
+    
+    for worker in relevant_workers:
+        # Check if the worker is currently working on a job
+        if worker.get_current_job() is not None:
+            return True
+    return False
 
-# Using partial to encapsulate the argument (game)
-async def start_ticker(game, speed):
+async def action_generator():
+    while True:
+        print("generating action1")
+        print(len(default_queue.jobs))
+        print(len(high_queue.jobs))
+
+        print(Journal().scheduled.items())
+        
+        default_has_running = has_running_jobs('default')
+        high_has_running = has_running_jobs('high')
+
+        print(default_has_running)
+        print(high_has_running)
+
+        if (len(default_queue.jobs) + default_has_running == 0 and len(high_queue.jobs) + high_has_running == 0):
+            print("generating action2")
+            if not Journal().active and not any(event['type'] == 'mission_select' for event_id, event in Journal().scheduled.items()):
+                print("generating mission")
+                emitter.emit('generate_action', {'action': 'select_mission', 'queue': 'high'})
+            else:
+                print("generating event3")
+                odds_events = (0.6)**len(Journal().scheduled)
+                odds_concepts = (0.6)**(len(Player().items)/8)
+                if (odds_events > 0.1):
+                    decide = random.choices(['compute_event','compute_concept'], weights=[odds_events, odds_concepts], k=1)[0]
+                    emitter.emit('generate_action', {'action': decide, 'queue': 'default'})
+        await asyncio.sleep(5)  # async sleep
+
+# Using partial to encapsulate the argument ()
+async def start_ticker(speed):
     try:
-        if game.journal.ticker:
-                game.journal.ticker.cancel()
-        game.journal.ticker = asyncio.create_task(tick(game, speed))
-        await game.journal.ticker  # Await the new task
+        if Journal().ticker:
+                Journal().ticker.cancel()
+        Journal().ticker = asyncio.create_task(tick(speed))
+        await Journal().ticker  # Await the new task
     except (asyncio.exceptions.CancelledError):
         pass
 
-async def stop_ticker(game):
-    if game.journal.ticker:
-        game.journal.ticker.cancel()
+async def stop_ticker():
+    if Journal().ticker:
+        Journal().ticker.cancel()
         socketio.emit('stop_time')
 
-async def tick(game, speed):
+async def tick(speed):
     tick_speed = 1 / math.pow(speed,0.75)
     while True:
         await asyncio.sleep(tick_speed)
-        await update_time(game, speed)
+        await update_time(speed)
 
-async def update_time(game, speed):
+async def update_time(speed):
     modifier = max(round(speed / 15.13,2),3) - 2
     modifier = math.pow(modifier,3)
-    game.journal.datetime += timedelta(minutes=modifier)
+    game = Game()
+    Journal().datetime += timedelta(minutes=modifier)
     
-    time = game.journal.datetime.strftime('%H:%M')
-    date = game.journal.datetime.strftime('%d.%m')
-    year = game.journal.datetime.strftime('%Y AD')
+    time = Journal().datetime.strftime('%H:%M')
+    date = Journal().datetime.strftime('%d.%m')
+    year = Journal().datetime.strftime('%Y AD')
 
     # for each event in scheduled_events, check if triggerdate is less than datetime
-    for event_id, event in game.journal.scheduled.items():
-        if event['triggerdate'] <= game.journal.datetime:
-            game.present({'action': 'lock_time'})
+    for event_id, event in Journal().scheduled.items():
+        if event['triggerdate'] <= Journal().datetime:
+            emitter.emit('lock_time')
             if event.get('location', False) != False:
-                game.player.location = event['location']
+                Player().location = event['location']
             socketio.emit('drop_event', {'new_html_content': event['html']})
     socketio.emit('update_time', {'time': time, 'date': date, 'year': year})
 
 # FETCH RESPONSE OOGABOOGA
 
-async def get_ws_result(game, prompt, json_schema=None, emit_progress_start=0, emit_progress_max=0):
+async def get_ws_result(prompt, json_schema=None, emit_progress_start=0, emit_progress_max=0):
     # while game.socket_occupied:
     #     await asyncio.sleep(0.1)  # wait for 1 second before checking again
     
@@ -433,61 +560,36 @@ def roll_all_dice_for(player,choice):
 
     return difference, challenge_rolls
 
-def update_character(game):
+def update_character():
     return
 
-def update_standing(game):
+def update_standing():
     return
 
-def update_objects(game):
+def update_objects():
     return
 
-def summarize_journal(game):
+def summarize_journal():
     return
 
-def compute_event_response(game, accepted_proposal: Dict):
-
+def complete_event(accepted_proposal: Dict):
     event_id = accepted_proposal['event_id']
-
-    choice = {}
-    
-    event = game.journal.scheduled.get(event_id)
-
+    event = Journal().scheduled.get(event_id)
     event['decision'] = accepted_proposal['option_id']
+    if event['type'] == 'mission_select':
+        Journal().active[event_id] = event
+    else:
+        Journal().completed[event_id] = event
+        compute_event_response(event_id, event)
+    Journal().scheduled.pop(event_id)
+    socketio.emit('remove_event_modal', {'event_id': event_id})
 
-    event_type = event['type']
-
-    if event_type == 'mission_select':
-        game.journal.active[event_id] = event
-        game.journal.scheduled.pop(event_id)
-        game.present({'action': 'wait_for_input'})
-        return
+def compute_event_response(event_id, event):
+    choice = event['options'][event['decision']]
     
-    # if event_type start with "event_" then execute some code
-    if (event_type.startswith('event_')):
-        game.journal.completed[event_id] = event
-        game.journal.scheduled.pop(event_id)
-        choice = event['options'][event['decision']]
-
-    if event_type == 'event_confirmation':
-        for key, value in choice.items():
-            match key:
-                case 'wealth_change':
-                    game.player.wealth += value
-                case 'notoriety_change':
-                    game.player.notoriety += value
-                # case 'character_change':
-                #     update_character(game)
-                # case 'standing_change':
-                #     update_standing(game)
-                # case 'item_change':
-                #     update_objects()
-                #     pass
-        summarize_journal(game)
-    
-    if event_type == 'event_challenge':
+    if event['type'] == 'event_challenge':
         # perform checks
-        outcome, challenge_rolls = roll_all_dice_for(game.player,choice)
+        outcome, challenge_rolls = roll_all_dice_for(Player(),choice)
         # create response event
         response = {}
         response['parent_id'] = event_id
@@ -503,30 +605,45 @@ def compute_event_response(game, accepted_proposal: Dict):
             {"player_option": "Continue"}
         ]
 
-        resolved_effects, tooltip = resolve_gameplay_effects(game.player,effects['gameplay_effects'], challenge_rolls, choice['difficulty'])
+        resolved_effects, tooltip = resolve_gameplay_effects(Player(),effects['gameplay_effects'], challenge_rolls, choice['difficulty'])
 
         response['options'][0]['tooltip_message'] = tooltip
         response['options'][0]['gameplay_effects'] = resolved_effects
 
-        load_event(response, game.journal.datetime + timedelta(minutes=random.randint(10, 60)), 'event_confirmation', game)
+        load_event(response, Journal().datetime + timedelta(minutes=random.randint(10, 60)), 'event_confirmation')
+
+    if event['type'] == 'event_confirmation':
+        for key, value in choice.items():
+            match key:
+                case 'wealth_change':
+                    Player().wealth += value
+                case 'notoriety_change':
+                    Player().notoriety += value
+                # case 'character_change':
+                #     update_character()
+                # case 'standing_change':
+                #     update_standing()
+                # case 'item_change':
+                #     update_objects()
+                #     pass
+        summarize_journal()
 
     # json_schema = get_jsonschema('event_response_schema.jinja')
-    # prompt = generate_prompt_action_analysis(game, event_id)
+    # prompt = generate_prompt_action_analysis(event_id)
     # print("generating event")
     # result_analysis = asyncio.run(get_ws_result(prompt, json_schema))
-    # game.present({'action': 'wait_for_input'})
 
-def resolve_gameplay_effects(player, gameplay_effects, challenge_rolls, difficulty):
+def resolve_gameplay_effects(gameplay_effects, challenge_rolls, difficulty):
     #calculate effects
     resolved_effects = {}
     tooltip_message = "Your actions have consequences:\n"
 
     if (gameplay_effects.get('direct_wealth_increase')):
-        resolved_effects['wealth_change'] = round((5*roll_dice_for_level(difficulty) * roll_dice_for_level(player.commerce)))
+        resolved_effects['wealth_change'] = round((5*roll_dice_for_level(difficulty) * roll_dice_for_level(Player().commerce)))
         tooltip_message += f"Your wealth increases with: {resolved_effects['wealth_change']} fl."
 
     if (gameplay_effects.get('direct_wealth_decrease')):
-        resolved_effects['wealth_change'] = round((5*roll_dice_for_level(difficulty) * roll_dice_for_level(player.commerce)))
+        resolved_effects['wealth_change'] = round((5*roll_dice_for_level(difficulty) * roll_dice_for_level(Player().commerce)))
         tooltip_message += f"Your wealth decreases with: {resolved_effects['wealth_change']} fl."
         resolved_effects['wealth_change'] *= -1
 
@@ -573,13 +690,13 @@ def resolve_gameplay_effects(player, gameplay_effects, challenge_rolls, difficul
 
     return resolved_effects, tooltip_message.replace("\n", "<br/>")
     
-def generate_prompt_event_response(game):
+def generate_prompt_event_response():
     print("generating event response")
 
-def generate_prompt_mission_evaluation(game):
+def generate_prompt_mission_evaluation():
     print("generating mission evaluation")
 
-def generate_prompt_action_analysis(game, event_id):
+def generate_prompt_action_analysis(event_id):
 
     instructions = f"""   
     - Understand the the player's current location and mission, player attributes, people, conditions and characteristics, player holdings, gear and assets, player relationships.
@@ -589,12 +706,12 @@ def generate_prompt_action_analysis(game, event_id):
     """
     prompt = textwrap.dedent(f"""
     {return_intro("scenario analyst", "the analysis of a player's actions for a a mission in JSON format")}
-    {return_profile(game)}
-    {return_character(game)}
-    {return_connections(game)}
-    {return_habitus(game)}
-    {return_mission(game, event_id=event_id)}
-    {return_event(game, event_id)}
+    {return_profile()}
+    {return_character()}
+    {return_connections()}
+    {return_habitus()}
+    {return_mission(event_id=event_id)}
+    {return_event(event_id)}
     {return_instructions(instructions)}
     """)
 
@@ -638,13 +755,13 @@ def get_nearby_difficulty_from(target_difficulty):
 
     return np.random.choice(difficulty_labels, p=weights)
 
-def compute_event(game):
+def compute_event():
 
     print("computing event")
 
     number_of_choices = random.randint(2, 3)
 
-    event_difficulty = get_difficulty_from(game.player.strength)
+    event_difficulty = get_difficulty_from(Player().strength)
     event_difficulty = get_nearby_difficulty_from(event_difficulty)
 
     # Generate the array of keys
@@ -658,29 +775,30 @@ def compute_event(game):
     if (Config.SKIP_GEN_EVENT):
         result = Config.SKIP_VAL2
     else:
-        mission_ids = list(game.journal.active.keys())
+        mission_ids = list(Journal().active.keys())
         print(f"Mission ids: {mission_ids}")
         if len(mission_ids) == 0:
             mission_id = -1
         else:
             count_mission_events = 0
             for mission_id in mission_ids:
-                for event_id, event in game.journal.scheduled.items():
+                for event_id, event in Journal().scheduled.items():
                     if (event['type'] == 'event_challenge' and event.get('parent_id') == mission_id):
                         count_mission_events += 1
                         mission_ids.remove(mission_id)
                         break
             print(f"Mission events: {count_mission_events}")
-            odds_mission_events = (0.8)**count_mission_events
-            count_random_events = sum(1 for event_id, event in game.journal.scheduled.items() if (event['type'] == 'event_challenge' and event.get('parent_id') == False))
-            odds_random_events = (0.8)**count_random_events
-            chosen = random.choices(['mission','random'], weights=[odds_mission_events, odds_random_events], k=1)[0]
-            if chosen == 'mission':
-                mission_id = random.choice(mission_ids)
-            else:
-                mission_id = -1
-        prompt = generate_prompt_event(game,event_difficulty, mission_id)
-        result = asyncio.run(get_ws_result(game,prompt, json_event_schema))
+            if (len(mission_ids)>0):
+                odds_mission_events = (0.8)**count_mission_events
+                count_random_events = sum(1 for event_id, event in Journal().scheduled.items() if (event['type'] == 'event_challenge' and event.get('parent_id') == False))
+                odds_random_events = (0.8)**count_random_events
+                chosen = random.choices(['mission','random'], weights=[odds_mission_events, odds_random_events], k=1)[0]
+                if chosen == 'mission':
+                    mission_id = random.choice(mission_ids)
+                else:
+                    mission_id = -1
+        prompt = generate_prompt_event(event_difficulty, mission_id)
+        result = asyncio.run(get_ws_result(prompt, json_event_schema))
     event = json.loads(result)
 
     event['difficulty'] = event_difficulty
@@ -701,30 +819,28 @@ def compute_event(game):
             option['amount'] = roll_dice_for_level(option['difficulty']) * 10
 
     est_time, est_date = generate_schedule(event)
-    triggerdate = get_trigger_datetime(game,est_date, est_time)
+    triggerdate = get_trigger_datetime(est_date, est_time)
 
-    load_event(event, triggerdate, 'event_challenge', game)
-
-    game.present({'action': 'wait_for_input'})
+    load_event(event, triggerdate, 'event_challenge')
 
 
-def load_event(event, triggerdate, template, game):
+def load_event(event, triggerdate, template):
 
     # append triggerdate to event
     
-    event_id = generate_event_id(game)
+    event_id = generate_event_id(Game())
 
     event['triggerdate'] = triggerdate
     event['type'] = template
     event['html'] = render_template(
             f'{template}.html', 
-            name=game.player.name,
+            name=Player().name,
             event=event,
-            event_id=event_id,
+            event_id=event_id
             )
      
-    # append event to game scheduled_events
-    game.journal.scheduled[event_id] = event
+    # append event to Game() scheduled_events
+    Journal().scheduled[event_id] = event
 
 
 def generate_schedule(event):
@@ -781,39 +897,39 @@ def get_random_time(time_status):
     minute = random.randint(0, 59)
     return time(hour, minute)
 
-def get_trigger_datetime(game,date_status, time_status, can_time_array = ['morning','afternoon','evening','night']):
+def get_trigger_datetime(date_status, time_status, can_time_array = ['morning','afternoon','evening','night']):
 
     timesequence = ['morning','afternoon','evening','night']
     # get index for each item in can_time_array from timesequence
     time_status_index = timesequence.index(time_status)
-    game_time_status_index = timesequence.index(game.journal.status)
+    game_time_status_index = timesequence.index(Journal().status)
 
      # If in the same part of the day, add a random amount of minutes to triggerdate
 
     if (date_status == 'now'):
-        if (game.journal.status == time_status):
-            time = (game.journal.datetime + timedelta(minutes=random.randint(1, 7))).time()
-            date = game.journal.datetime.date()
+        if (Journal().status == time_status):
+            time = (Journal().datetime + timedelta(minutes=random.randint(1, 7))).time()
+            date = Journal().datetime.date()
         else:
             date_status = 'today'
     
     if date_status == 'today':
-        if (game.journal.status == time_status):
-            time = (game.journal.datetime + timedelta(minutes=random.randint(1, 119))).time()
-            date = game.journal.datetime.date()
+        if (Journal().status == time_status):
+            time = (Journal().datetime + timedelta(minutes=random.randint(1, 119))).time()
+            date = Journal().datetime.date()
         elif time_status_index > game_time_status_index:
             time = get_random_time(time_status)
-            date = game.journal.datetime.date()
+            date = Journal().datetime.date()
         else:
             date_status = 'tomorrow'
     
     if date_status == 'tomorrow':
         time = get_random_time(time_status)
-        date = (game.journal.datetime + timedelta(days=1)).date()
+        date = (Journal().datetime + timedelta(days=1)).date()
 
     if date_status == 'this_week':
         time = get_random_time(time_status)
-        date = (game.journal.datetime + timedelta(days=random.randint(2, 7))).date()
+        date = (Journal().datetime + timedelta(days=random.randint(2, 7))).date()
     
     # Combine date and time
     trigger_datetime = datetime.combine(date, time)
@@ -821,7 +937,7 @@ def get_trigger_datetime(game,date_status, time_status, can_time_array = ['morni
     return trigger_datetime
 
 
-def generate_prompt_event(game,challenge_type,mission_id=-1):
+def generate_prompt_event(challenge_type,mission_id=-1):
 
     if (mission_id != -1):
         rule_1 = "- Generate an event that is entirely warranted by the mission progression (important) and narrative, using hooks from the current game state."
@@ -879,84 +995,85 @@ def generate_prompt_event(game,challenge_type,mission_id=-1):
     'Force' is the confluence of physical might with the ideals of principled leadership. It emphasizes the exertion of authority driven by both inner strength and a commitment to honorable action.
     'Diplomacy', at its core, is the art of navigating and harmonizing interpersonal relationships. It accentuates the importance of building bridges, fostering communal bonds, and skillfully managing social dynamics.
     
-    {return_profile(game)}
-    {return_character(game)}
-    {return_connections(game)}
-    {return_habitus(game)}
-    {return_mission(game, mission_id=mission_id)}    
+    {return_profile()}
+    {return_character()}
+    {return_connections()}
+    {return_habitus()}
+    {return_mission(mission_id=mission_id)}    
     {return_instructions(instructions)}
     """)
 
     print(prompt)
     return prompt
 
-def load_game(game, accepted_proposal: Dict):
+def load_game(accepted_proposal: Dict):
     background = f"""Your background: {accepted_proposal['background']}
     """
     relationships = f"""Your relationships: {accepted_proposal['relations']}
     """
-    game.player.starting_data = f"{background if len(accepted_proposal['background']) > 0 else ''}{relationships if len(accepted_proposal['relations']) > 0 else ''}"
-    game.player.name = accepted_proposal['name']
-    game.player.age = int(accepted_proposal['age'])
-    game.player.occupation = accepted_proposal['occupation']
-    game.player.lifestyle = accepted_proposal['lifestyle']
-    game.player.people = accepted_proposal['people']
-    game.player.objects = accepted_proposal['objects']
-    game.player.places = accepted_proposal['places']
+    Player().starting_data = f"{background if len(accepted_proposal['background']) > 0 else ''}{relationships if len(accepted_proposal['relations']) > 0 else ''}"
+    Player().name = accepted_proposal['name']
+    Player().age = int(accepted_proposal['age'])
+    Player().occupation = accepted_proposal['occupation']
+    Player().lifestyle = accepted_proposal['lifestyle']
+    Player().people = accepted_proposal['people']
+    Player().objects = accepted_proposal['objects']
+    Player().places = accepted_proposal['places']
 
     # generate trink items
-    
+    print("Is app context:", app.app_context())
+    print("Current app:", app._get_current_object())
     game_loader_template = render_template(
         'game_loader.html', 
-        name=game.player.name
+        name=Player().name
         )
 
     socketio.emit('deploy_loader', {'new_html_content': game_loader_template})
 
     if (Config.SKIP_GEN_STATE):
         data = Config.SKIP_VAL_STATE
-        game.player.people = Config.SKIP_VAL_PEOPLE
-        game.player.objects = Config.SKIP_VAL_OBJECTS
-        game.player.places = Config.SKIP_VAL_PLACES
+        Player().people = Config.SKIP_VAL_PEOPLE
+        Player().objects = Config.SKIP_VAL_OBJECTS
+        Player().places = Config.SKIP_VAL_PLACES
 
     else:    
-        prompt = generate_item_concepts_start(game,'places')
-        game.player.places.extend([f'location-{i}' for i in range(len(game.player.places)+1, 5)])
+        prompt = generate_item_concepts_start('places')
+        Player().places.extend([f'location-{i}' for i in range(len(Player().places)+1, 5)])
         wrapper = {
-            "items" : game.player.places,
+            "items" : Player().places,
             "type" : "places"
         }
         json_state_schema = get_jsonschema('state_schema.jinja',wrapper)
-        result = asyncio.run(get_ws_result(game,prompt, json_state_schema,emit_progress_start=0, emit_progress_max=4500))
-        game.player.places = {item['name']: {"significance": item['significance'], "owner": item['owner'], "significant": True} for item in json.loads(result).values()}
+        result = asyncio.run(get_ws_result(prompt, json_state_schema,emit_progress_start=0, emit_progress_max=4500))
+        Player().places = {item['name']: {"significance": item['significance'], "owner": item['owner'], "significant": True} for item in json.loads(result).values()}
 
-        print(game.player.places)
+        print(Player().places)
 
-        prompt = generate_item_concepts_start(game,'people')
-        game.player.people.extend([f'entity-{i}' for i in range(len(game.player.people)+1, 7)])
+        prompt = generate_item_concepts_start('people')
+        Player().people.extend([f'entity-{i}' for i in range(len(Player().people)+1, 7)])
         wrapper = {
-            "items" : game.player.people,
+            "items" : Player().people,
             "type" : "people"
         }
         json_state_schema = get_jsonschema('state_schema.jinja',wrapper)
-        result = asyncio.run(get_ws_result(game,prompt, json_state_schema,emit_progress_start=1500, emit_progress_max=4500))
-        game.player.people = {item['name']: {"significance": item['significance'], "location": item['location'], "disposition": item['disposition_towards_player'], "significant": True} for item in json.loads(result).values()}
+        result = asyncio.run(get_ws_result(prompt, json_state_schema,emit_progress_start=1500, emit_progress_max=4500))
+        Player().people = {item['name']: {"significance": item['significance'], "location": item['location'], "disposition": item['disposition_towards_player'], "significant": True} for item in json.loads(result).values()}
 
-        print(game.player.people)
+        print(Player().people)
 
-        prompt = generate_item_concepts_start(game,'objects')
-        game.player.objects.extend([f'object-{i}' for i in range(len(game.player.objects)+1, 4)])
+        prompt = generate_item_concepts_start('objects')
+        Player().objects.extend([f'object-{i}' for i in range(len(Player().objects)+1, 4)])
         wrapper = {
-            "items" : game.player.objects,
+            "items" : Player().objects,
             "type" : "objects"
         }
         json_state_schema = get_jsonschema('state_schema.jinja',wrapper)
-        result = asyncio.run(get_ws_result(game,prompt, json_state_schema,emit_progress_start=3000, emit_progress_max=4500))
-        game.player.objects = {item['name']: {"significance": item['significance'],"location": item['location'],"owner": item['owner'], "significant": True} for item in json.loads(result).values()}
+        result = asyncio.run(get_ws_result(prompt, json_state_schema,emit_progress_start=3000, emit_progress_max=4500))
+        Player().objects = {item['name']: {"significance": item['significance'],"location": item['location'],"owner": item['owner'], "significant": True} for item in json.loads(result).values()}
 
-        print(game.player.objects)
+        print(Player().objects)
 
-        data = transform(game.player)
+        data = transform()
         
     print(data)
     
@@ -972,16 +1089,16 @@ def get_jsonschema(filename, items=None):
     else:
         return template.render(items=items)
     
-def transform(player):
+def transform():
     result = {
         "name": "My Empire",
         "children": []
     }
     
     dicts_to_iterate = [
-        {"dict": player.places, "type": "Location"},
-        {"dict": player.objects, "type": "Object"},
-        {"dict": player.people, "type": "Entity"}
+        {"dict": Player().places, "type": "Location"},
+        {"dict": Player().objects, "type": "Object"},
+        {"dict": Player().people, "type": "Entity"}
     ]
 
     for d in dicts_to_iterate:
@@ -994,25 +1111,24 @@ def transform(player):
             result["children"].append(child)
     return result
 
-def generate_state_narrative(game, brainstorm_results = None):
+def generate_state_narrative(brainstorm_results = None):
     instructions = """
     - Understand the gamestate fully and constellate items from your background, relationships, occupation and lifestyle into interconnected narratives and themes.
-    - Distill the narrative into three interconnected sections: player's background, player's lifestyle and player's relationships. 
+    - Distill the narrative into three interconnected sections: player's background, player's lifestyle and player's standing. 
     - For the player's background, focus on player's important locations, their origin and hooks to the present and future.
-    - For the player's relationships, focus on describing the player's relationships with important people, factions and groups.
-    - For the player's standing, focus on describing the player's reputation among communities, groups and organizations.
     - For the player's lifestyle, focus on job & occupation and daily activities and expenses.
+    - For the player's standing, focus on describing the player's reputation among communities, groups and organizations.
     - Be sure to write critically, holistically and realistically.
     - Do not use anything from the example JSON above. Be be creative and think outside the box. Go for a different take, structure and approach.
     - Be sure to write in second person, always considering everything from the perspective of the player.        
     """
     prompt = textwrap.dedent(f"""
     {return_intro("expert game state conceptualizer / narrative writer", "generating a narrative summary in JSON format")}
-    {return_profile(game)}
-    {return_character(game)}
-    {game.player.starting_data}
-    {return_connections(game)}
-    {return_habitus(game)}
+    {return_profile()}
+    {return_character()}
+    {Player().starting_data}
+    {return_connections()}
+    {return_habitus()}
     {return_instructions(instructions)}
     """)
     
@@ -1020,7 +1136,7 @@ def generate_state_narrative(game, brainstorm_results = None):
     return prompt
     
     
-def generate_item_concepts_start(game, type):
+def generate_item_concepts_start(type):
 
     places = """{
             "location-[i]": "Your [REDACTED] in [REDACTED]",
@@ -1086,11 +1202,11 @@ def generate_item_concepts_start(game, type):
     {return_intro("expert game state generator/brainstormer", "generating an array of game items in JSON format")}  
     An example of json output (this is just an example so do not use - ignore the redacted parts):
     {samples}
-    {return_profile(game)}
-    {return_character(game)}
-    {game.player.starting_data}
-    {return_connections(game)}
-    {return_habitus(game)}
+    {return_profile()}
+    {return_character()}
+    {Player().starting_data}
+    {return_connections()}
+    {return_habitus()}
     {return_instructions(instructions)}
     """)
     
@@ -1098,50 +1214,16 @@ def generate_item_concepts_start(game, type):
     return prompt
     
     
-def compute_mission(game):
-    json_schema = textwrap.dedent("""{
-    "type": "object",
-    "properties": {
-        "missions": {
-            "type": "object",
-            "description": "The missions you (=the player) are facing (always write in the second perspective)",
-            "properties": {
-                "mission_1": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "narrative": {"type": "string"},
-                        "closure_conditions": {"type": "string"}
-                    }
-                },
-                "mission_2": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "narrative": {"type": "string"},
-                        "closure_conditions": {"type": "string"}
-                    }
-                },
-                "mission_3": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "narrative": {"type": "string"},
-                        "closure_conditions": {"type": "string"}
-                    }
-                }
-            }
-        }
-    }
-}""")
-
+def compute_mission():
+    game = game.load()
+    json_schema = get_jsonschema('mission_schema.jinja')
 
     if (Config.SKIP_GEN_MISSION):
         result = Config.SKIP_VAL_MISSION
     else:
-        prompt = generate_prompt_mission(game)
-        print(prompt)  
-        result = asyncio.run(get_ws_result(game,prompt, json_schema))
+        prompt = generate_prompt_mission()
+        print(prompt)
+        result = asyncio.run(get_ws_result(prompt, json_schema))
     event = json.loads(result)    
 
     event['missions'] = [value for key, value in event['missions'].items()]
@@ -1150,12 +1232,11 @@ def compute_mission(game):
 
     print(event['missions'])
 
-    load_event(event, game.journal.datetime + timedelta(hours=3), 'mission_select', game)
+    load_event(event, Journal().datetime + timedelta(hours=3), 'mission_select', game)
+    game.save()
 
-    game.present({'action': 'wait_for_input'})
 
-
-def generate_prompt_mission(game):
+def generate_prompt_mission():
     instructions = f"""
     - Generate THREE missions that are warranted by the player state and game state.
     - Ensure that the generated missions BRANCH from the current gamestate and are NOT SEQUENTIAL TO EACH OTHER.
@@ -1166,25 +1247,25 @@ def generate_prompt_mission(game):
     """
     prompt = textwrap.dedent(f"""
     {return_intro("expert mission writer", "generating a player mission in JSON format")}
-    {return_profile(game)}
-    {return_character(game)}
-    {return_connections(game)}
-    {return_habitus(game)}
+    {return_profile()}
+    {return_character()}
+    {return_connections()}
+    {return_habitus()}
     {return_instructions(instructions)}
     """)
     return prompt
     
-def generate_event_id(game):
-    event_id = game.journal.counter
-    game.journal.counter += 1
+def generate_event_id():
+    event_id = Journal().counter
+    Journal().counter += 1
     return int(event_id)
 
-def return_profile(game, event = None):
+def return_profile(event = None):
     profile = f"""
-    Your name: {game.player.name} (this is you - don't refer to yourself from the third perspective!)
-    Your age: {game.player.age}
-    Your occupation: {game.player.occupation}
-    Your location:{game.player.location}
+    Your name: {Player().name} (this is you - don't refer to yourself from the third perspective!)
+    Your age: {Player().age}
+    Your occupation: {Player().occupation}
+    Your location:{Player().location}
     """
     if event is None:
         return profile
@@ -1194,59 +1275,61 @@ def return_profile(game, event = None):
         profile += location
     return profile
 
-def return_character(game):
+def return_character():
     character = f"""
-    Your worldview: {game.player.worldview_str}
-    Your social class: {game.player.socialclass_str}
-    Your personality: {game.player.personality_str}
-    Your traits: {game.player.traits_str}
-    Your communication style: {game.player.communication_str}
+    Your worldview: {Player().worldview_str}
+    Your social class: {Player().socialclass_str}
+    Your personality: {Player().personality_str}
+    Your traits: {Player().traits_str}
+    Your communication style: {Player().communication_str}
     """
     return character
 
-def return_connections(game):
+def return_connections():
     people = ""
     standing = ""
-    notoriety = f"Your notoriety: {game.player.notoriety_str}\n\n"
-    if len(game.player.standing) > 1:
-        standing= f"Your standing: {game.player.standing}\n\n"
-    if len(game.player.sig_people_str) > 1:
-        people = f"Your significant people:\n{game.player.sig_people_str}\n"
+    notoriety = f"Your notoriety: {Player().notoriety_str}\n\n"
+    if len(Player().standing) > 1:
+        standing= f"Your standing: {Player().standing}\n\n"
+    if len(Player().sig_people_str) > 1:
+        people = f"Your significant people:\n{Player().sig_people_str}\n"
     return notoriety + standing + people
 
-def return_journal(game):
+def return_journal():
     # summary + last events/actions
     summary = ""
-    if len(game.journal.summary) > 1:
-        summary = f"Your journal: {game.player.background}\n\n"
+    if len(Journal().summary) > 1:
+        summary = f"Your journal: {Player().background}\n\n"
     return summary
 
-def return_habitus(game):
+def return_habitus():
     lifestyle = ""
     objects = ""
     places = ""
-    finance = f"Your financial health: {game.player.financial_health_str}\n\n"
-    if len(game.player.lifestyle) > 1:
-        lifestyle = f"Your lifestyle: {game.player.lifestyle}\n\n"
-    if len(game.player.sig_places_str) > 1:
-        places = f"Your significant places:\n{game.player.sig_places_str}\n\n"
-    if len(game.player.sig_objects_str) > 1:
-        objects = f"Your significant objects:\n{game.player.sig_objects_str}\n\n"
+    finance = f"Your financial health: {Player().financial_health_str}\n\n"
+    if len(Player().lifestyle) > 1:
+        lifestyle = f"Your lifestyle: {Player().lifestyle}\n\n"
+    if len(Player().sig_places_str) > 1:
+        places = f"Your significant places:\n{Player().sig_places_str}\n\n"
+    if len(Player().sig_objects_str) > 1:
+        objects = f"Your significant objects:\n{Player().sig_objects_str}\n\n"
     return places + objects + finance + lifestyle
 
-def return_mission(game, mission_id = -1, event_id = -1):
+def return_mission(mission_id = -1, event_id = -1):
     if (event_id != -1):
-        mission_id = int(game.journal.scheduled.get(event_id).get('parent_id',-1))
+        mission_id = int(Journal().scheduled.get(event_id).get('parent_id',-1))
     if (mission_id == -1):
         mission = None
         return ""
     else:
-        mission = game.journal.active.get(mission_id)
+        mission = Journal().active.get(mission_id)
+        print(mission)
+        mission = mission['missions'][mission['decision']]
         mission = mission['title'] + ":  " + mission['narrative']
         mission = f"# The current active mission (important):\n{mission}"
         counter = 0
         progress = "\n\nYou made the following progress on this mission (important):\n"
-        for event in game.journal.readme:
+        for event in Journal().readme:
             if (event.get('mission_id') == mission_id):
                 progress += event.get('story') + "\n"
                 counter += 1
@@ -1254,8 +1337,8 @@ def return_mission(game, mission_id = -1, event_id = -1):
             progress = ""
         return mission + progress
 
-def return_event(game, event = None, executed_option = None):
-    if not game.journal.scheduled or event is None:
+def return_event(event = None, executed_option = None):
+    if not Journal().scheduled or event is None:
         event = None
     else:
         event = f"""# The event that was triggered (important):\n {event['title']}": "{event['event_body']}\n\n

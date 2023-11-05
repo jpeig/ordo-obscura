@@ -1,8 +1,9 @@
-from . import socketio
+from . import socketio, redis, emitter
 from flask import Blueprint, g
 from typing import List, Dict
-from .state import *
+import math
 from datetime import datetime
+import pickle
 
 models = Blueprint('models', __name__,
                         template_folder='templates',
@@ -58,40 +59,35 @@ class Player:
     }
 
     def __init__(self):
-        self.diplomacy = 0
-        self.force = 0
-        self.insight = 0
-        self.start_commerce = 0
-
-        self.wealth = 0
-        self.debt = 0
-        self.income = 0
-        self.expenses = 0
-
-        self.health = 15
-        self.notoriety = 1
+        self._attributes = {}
+        self.fetch_from_redis()
         
-        self.name = ""
-        self.location = "At a resting place."
-        self.age = ""
-        self.occupation = ""
-
-        self.relations = ""
-        self.background = ""
-        self.lifestyle = ""
-        self.standing = ""
-
-        self.people = []
-        self.objects = []
-        self.places = []
-
-        self.personality = []
-        self.worldview = []
-        self.socialclass = []
-
-        self.stability = 100
-        self.traits = []
-        self.communication = []
+    def fetch_from_redis(self):
+        player_data = redis.get('player')
+        if player_data:
+            self._attributes = pickle.loads(player_data)
+            
+    def save_to_redis(self):
+        redis.set('player', pickle.dumps(self._attributes))
+    
+    def __getattr__(self, name):
+        # First, check if the attribute is a class property or method
+        if name in self.__class__.__dict__:
+            return object.__getattribute__(self, name)
+        
+        # Then check the _attributes dictionary
+        try:
+            return self._attributes[name]
+        except KeyError:
+            raise AttributeError(f"'Player' object has no attribute '{name}'")
+    
+    def __setattr__(self, name, value):
+        # To avoid recursion, only use _attributes for storing player attributes
+        if name in ['_attributes']:
+            super().__setattr__(name, value)
+        else:
+            self._attributes[name] = value
+            self.save_to_redis()
 
     @property
     def items(self):
@@ -208,14 +204,35 @@ class Player:
    
 class Journal:
     def __init__(self):
-        self.counter = 0
-        self.datetime = datetime.now()
-        self.ticker = None
-        self.significance = ""
-        self.complexity = ""
-        self.scheduled: Dict[int, Dict] = {}
-        self.active: Dict[int, Dict] = {}
-        self.completed: Dict[int, Dict] = {}
+        self._attributes = {}
+        self.fetch_from_redis()
+
+    def fetch_from_redis(self):
+        journal_data = redis.get('journal')
+        if journal_data:
+            self._attributes = pickle.loads(journal_data)
+            
+    def save_to_redis(self):
+        redis.set('journal', pickle.dumps(self._attributes))
+    
+    def __getattr__(self, name):
+        # First, check if the attribute is a class property or method
+        if name in self.__class__.__dict__:
+            return object.__getattribute__(self, name)
+        
+        # Then check the _attributes dictionary
+        try:
+            return self._attributes[name]
+        except KeyError:
+            raise AttributeError(f"'Journal' object has no attribute '{name}'")
+    
+    def __setattr__(self, name, value):
+        # To avoid recursion, only use _attributes for storing player attributes
+        if name in ['_player_id', '_attributes']:
+            super().__setattr__(name, value)
+        else:
+            self._attributes[name] = value
+            self.save_to_redis()
 
     @property
     def readme(self):
@@ -281,19 +298,44 @@ class Journal:
     
 class Game:
     def __init__(self):
-        self.state: GameState()
-        self.player = Player()
-        self.journal = Journal()
-        self.socket_occupied = False
+        self._attributes = {}
+        self.fetch_from_redis()
+
+    def fetch_from_redis(self):
+        game_data = redis.get('game')
+        if game_data:
+            self._attributes = pickle.loads(game_data)
+            
+    def save_to_redis(self):
+        redis.set(f'game', pickle.dumps(self._attributes))
     
+    def __getattr__(self, name):
+        # First, check if the attribute is a class property or method
+        if name in self.__class__.__dict__:
+            return object.__getattribute__(self, name)
+        # Then check the _attributes dictionary
+        return self._attributes.get(name, None)  # Return None if attribute not found
+    
+    def __setattr__(self, name, value):
+        # To avoid recursion, only use _attributes for storing player attributes
+        if name in ['_game_id', '_attributes']:
+            super().__setattr__(name, value)
+        else:
+            self._attributes[name] = value
+            self.save_to_redis()
+
     def present(self, proposal):
         if self.decide(proposal):
-            next_state = compute_next_state(self,proposal)
-            print("Next state: ", next_state)
-            change_state(next_state,self, proposal)
+            emitter.emit('accepted_proposal', proposal)
         
     def decide(self, proposal):
         if proposal['action'] == 'execute_option':
+            return True
+        if proposal['action'] == 'select_mission':
+            return True
+        if proposal['action'] == 'compute_event':
+            return True
+        if proposal['action'] == 'compute_concept':
             return True
         if proposal['action'] == 'init_app':
             return True
@@ -325,30 +367,3 @@ class Game:
 
         if proposal['action'] == 'load_game':
             return True
-
-
-def compute_next_state(game,accepted_proposal: Dict):
-    if (accepted_proposal['action'] == "init_app"):
-        return WIZARD_WAITING
-    if (accepted_proposal['action'] == "execute_option"):
-        return RESPONSE_COMPUTING
-    if (accepted_proposal['action'] == "lock_time"):
-        return TIME_LOCKED
-    if (accepted_proposal['action'] == "load_game"):
-        return GAME_LOADING
-    if (accepted_proposal['action'] == "change_stat"):
-        return WIZARD_UPDATING
-    if (accepted_proposal['action'] == "wait_for_input"):
-        if not game.journal.active and not any(event['type'] == 'mission_select' for event_id, event in game.journal.scheduled.items()):
-            return MISSION_COMPUTING
-        else:
-            odds_events = (0.8)**len(game.journal.scheduled)
-            odds_concepts = (0.8)**(len(game.player.items)/8)
-            return random.choices([EVENT_COMPUTING,CONCEPT_COMPUTING], weights=[odds_events, odds_concepts], k=1)[0]
-    if (accepted_proposal['action'] == "change_speed"):
-        if accepted_proposal['speed'] >= 1.0:
-            return GAME_TICKING
-        if accepted_proposal['speed'] < 1.0:
-            return GAME_PAUSING
-    else:
-        return ("Invalid")

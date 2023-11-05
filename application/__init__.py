@@ -1,12 +1,30 @@
 from flask import Flask, g
 from flask_redis import FlaskRedis
 from flask_socketio import SocketIO
+from flask_rq2 import RQ
 
+class EventEmitter:
+    def __init__(self):
+        self._events = {}
+
+    def on(self, event):
+        def decorator(func):
+            if event not in self._events:
+                self._events[event] = []
+            self._events[event].append(func)
+            return func
+        return decorator
+
+    def emit(self, event, *args, **kwargs):
+        if event in self._events:
+            for callback in self._events[event]:
+                callback(*args, **kwargs)
 
 # Globally accessible libraries
 redis = FlaskRedis()
 socketio = SocketIO()
-
+rq = RQ()
+emitter = EventEmitter()
 
 def init_app():
     """Initialize the core application."""
@@ -15,9 +33,11 @@ def init_app():
 
     # Initialize Plugins
     redis.init_app(app)
-    socketio.init_app(app)
+    socketio.init_app(app, message_queue=app.config['REDIS_URL'])
+    rq.init_app(app)
 
     with app.app_context():
+
         # Include our Routes
         from . import state, actions, models, routes
 

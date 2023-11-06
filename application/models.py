@@ -10,6 +10,49 @@ models = Blueprint('models', __name__,
                         static_folder="static")
 
 
+class AttributeDictProxy:
+    def __init__(self, parent, name):
+        self._parent = parent
+        self._name = name
+
+    def __getitem__(self, key):
+        return self._parent._attributes[self._name][key]
+
+    def __setitem__(self, key, value):
+        self._parent._attributes[self._name][key] = value
+        self._parent.save_to_redis()
+
+    def __contains__(self, key):
+        return key in self._parent._attributes[self._name]
+
+    def items(self):
+        return self._parent._attributes[self._name].items()
+
+    def keys(self):
+        return self._parent._attributes[self._name].keys()
+
+    def values(self):
+        return self._parent._attributes[self._name].values()
+    
+    def __len__(self):
+        return len(self._parent._attributes[self._name])
+    
+    def __or__(self, other):
+        if not isinstance(other, AttributeDictProxy):
+            return NotImplemented
+        new_dict = AttributeDictProxy(self._parent, self._name)
+        combined_attributes = {**self._parent._attributes[self._name], **other._parent._attributes[other._name]}
+        self._parent._attributes[self._name] = combined_attributes
+        return new_dict
+    
+    def get(self, key, default=None):
+        return self._parent._attributes[self._name].get(key, default)
+    
+    def pop(self, key, default=None):
+        value = self._parent._attributes[self._name].pop(key, default)
+        self._parent.save_to_redis()
+        return value
+
 class Player:
     notoriety_levels = {
         1: "You're practically invisible to the world; no one knows your name.",
@@ -59,25 +102,53 @@ class Player:
     }
 
     def __init__(self):
-        self._attributes = {}
-        self.fetch_from_redis()
+        self._attributes = {
+            'diplomacy': 0,
+            'force': 0,
+            'insight': 0,
+            'start_commerce': 0,
+            'wealth': 0,
+            'debt': 0,
+            'income': 0,
+            'expenses': 0,
+            'health': 15,
+            'notoriety': 1,
+            'name': "",
+            'location': "At a resting place.",
+            'age': "",
+            'occupation': "",
+            'relations': "",
+            'background': "",
+            'lifestyle': "",
+            'standing': "",
+            'people': [],
+            'objects': [],
+            'places': [],
+            'personality': [],
+            'worldview': [],
+            'socialclass': [],
+            'stability': 100,
+            'traits': [],
+            'communication': []
+        }
+        self.save_to_redis()
         
-    def fetch_from_redis(self):
+    def save_to_redis(self):
+        redis.set(f'player', pickle.dumps(self._attributes))
+    
+    def __getattr__(self, name):
         player_data = redis.get('player')
         if player_data:
             self._attributes = pickle.loads(player_data)
-            
-    def save_to_redis(self):
-        redis.set('player', pickle.dumps(self._attributes))
-    
-    def __getattr__(self, name):
         # First, check if the attribute is a class property or method
         if name in self.__class__.__dict__:
             return object.__getattribute__(self, name)
-        
         # Then check the _attributes dictionary
         try:
-            return self._attributes[name]
+            value = self._attributes[name]
+            if isinstance(value, dict):
+                return AttributeDictProxy(self, name)
+            return value
         except KeyError:
             raise AttributeError(f"'Player' object has no attribute '{name}'")
     
@@ -201,28 +272,53 @@ class Player:
             return ""
         else:
             return ', '.join([str(self.communication[i]) for i in range(len(self.communication))])
-   
+
+class Time:
+    def __init__(self):
+        self.ticker = None
+        self.datetime = datetime.now()
+
+    @property
+    def status(self):  
+        # Check the time
+        hour = self.datetime.time().hour  # get the hour as an integer
+        if 6 <= hour < 12:
+            time_status = 'morning'
+        elif 12 <= hour < 18:
+            time_status = 'afternoon'
+        elif 18 <= hour < 24:
+            time_status = 'evening'
+        else:
+            time_status = 'night'
+        
+        return time_status
+
 class Journal:
     def __init__(self):
-        self._attributes = {}
-        self.fetch_from_redis()
-
-    def fetch_from_redis(self):
-        journal_data = redis.get('journal')
-        if journal_data:
-            self._attributes = pickle.loads(journal_data)
+        self._attributes = {
+            'counter': 0,
+            'scheduled': {},
+            'active': {},
+            'completed': {}
+        }
+        self.save_to_redis()
             
     def save_to_redis(self):
         redis.set('journal', pickle.dumps(self._attributes))
     
     def __getattr__(self, name):
         # First, check if the attribute is a class property or method
+        self._attributes = pickle.loads(redis.get('journal'))
+
         if name in self.__class__.__dict__:
             return object.__getattribute__(self, name)
         
         # Then check the _attributes dictionary
         try:
-            return self._attributes[name]
+            value = self._attributes[name]
+            if isinstance(value, dict):
+                return AttributeDictProxy(self, name)
+            return value
         except KeyError:
             raise AttributeError(f"'Journal' object has no attribute '{name}'")
     
@@ -260,7 +356,7 @@ class Journal:
                 player_option = event_challenge['options'][event_challenge['decision']]['player_option']
                 mission_id = event_challenge.get('parent_id',-1)
                 story = f"""{event_challenge['title']}
-                {event_challenge['location']}, {(self.datetime - event_challenge['triggerdate']).days} days ago:
+                {event_challenge['location']}, {(gametime.datetime - event_challenge['triggerdate']).days} days ago:
 
                 {event_challenge['event_body']}
                 
@@ -280,37 +376,19 @@ class Journal:
 
                 log.append(item)
         return sorted(log, key=lambda x: x['datetime'], reverse=True)
-
-    @property
-    def status(self):  
-        # Check the time
-        hour = self.datetime.time().hour  # get the hour as an integer
-        if 6 <= hour < 12:
-            time_status = 'morning'
-        elif 12 <= hour < 18:
-            time_status = 'afternoon'
-        elif 18 <= hour < 24:
-            time_status = 'evening'
-        else:
-            time_status = 'night'
-        
-        return time_status
     
 class Game:
     def __init__(self):
-        self._attributes = {}
-        self.fetch_from_redis()
-
-    def fetch_from_redis(self):
-        game_data = redis.get('game')
-        if game_data:
-            self._attributes = pickle.loads(game_data)
+        self._attributes = {
+            'state': None,
+        }
+        self.save_to_redis()
             
     def save_to_redis(self):
         redis.set(f'game', pickle.dumps(self._attributes))
     
     def __getattr__(self, name):
-        # First, check if the attribute is a class property or method
+        self._attributes = pickle.loads(redis.get('game'))
         if name in self.__class__.__dict__:
             return object.__getattribute__(self, name)
         # Then check the _attributes dictionary
@@ -367,3 +445,8 @@ class Game:
 
         if proposal['action'] == 'load_game':
             return True
+        
+gametime = Time()
+player = Player()
+game = Game()
+journal = Journal()

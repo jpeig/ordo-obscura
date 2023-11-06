@@ -1,14 +1,12 @@
 from flask import Blueprint, g
 from . import socketio, emitter
-from .models import Game
+from .models import game
 import re
 import textwrap
 
 actions = Blueprint('actions', __name__,
                         template_folder='templates',
                         static_folder="static")
-
-game = {}
 
 @socketio.on('commandKeyPressed')
 def handle_updated_output(data):
@@ -45,7 +43,7 @@ def handle_updated_output(event_id, option_id):
     'option_id': int(option_id),
     'action': 'execute_option'
     }
-    Game().present(proposal)
+    game.present(proposal)
 
 @socketio.on('change_stat')
 def handle_updated_output(data):
@@ -53,7 +51,7 @@ def handle_updated_output(data):
     'values': data,
     'action': 'change_stat'
     }
-    Game().present(proposal)
+    game.present(proposal)
 
 @socketio.on('change_speed')
 def handle_change_speed(speed):
@@ -64,18 +62,18 @@ def handle_change_speed(speed):
     'speed': speed,
     'action': 'change_speed'
     }
-    Game().present(proposal)
+    game.present(proposal)
 
 @socketio.on('init_app')
 def handle_app_init():
     proposal = {
     'action': 'init_app'
     }
-    Game().present(proposal)
+    game.present(proposal)
 
 @emitter.on('lock_time')
 def handle_lock_time():
-    Game().present({'action': 'lock_time'})
+    game.present({'action': 'lock_time'})
 
 @emitter.on('generate_action')
 def handle_updated_output(data):
@@ -84,7 +82,7 @@ def handle_updated_output(data):
     'action': data.get('action'),
     'queue': data.get('queue')
     }
-    Game().present(proposal)
+    game.present(proposal)
 
 @socketio.on('load_game')
 def handle_updated_output(data):
@@ -111,4 +109,4 @@ def handle_updated_output(data):
 
     print(proposal)
 
-    Game().present(proposal)
+    game.present(proposal)

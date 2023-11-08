@@ -1,6 +1,6 @@
 from flask import Blueprint, g
 from . import socketio, emitter
-from .models import game
+from .models import game, journal, player, gametime
 import re
 import textwrap
 
@@ -20,9 +20,13 @@ def handle_updated_output(data):
     
     match data['message']:
         case 'game.journal':
-            object = game.journal
+            object = journal
         case 'game.player':
-            object = game.player
+            object = player
+        case 'game.gametime':
+            object = gametime
+        case 'game.gm':
+            object = game
     
     # Print attributes and properties of the game object
     for attr in dir(object):

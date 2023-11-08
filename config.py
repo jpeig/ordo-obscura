@@ -9,9 +9,9 @@ class Config:
     HOST = '0.0.0.0'
     PORT = 8001
     SKIP_GEN_MISSION = False
-    SKIP_GEN_NARRATIVE = True
+    SKIP_GEN_NARRATIVE = False
     SKIP_GEN_EVENT = False
-    SKIP_GEN_STATE = True
+    SKIP_GEN_STATE = False
     SKIP_VAL_NARRATIVE = """{
     "player_background": "As an aspiring entrepreneur living during the Dutch Golden Age, you grew up surrounded by the opulent splendor of the Baroque era. Born in a small village near the river Vecht, you were captivated by tales of adventure and wealth brought back by traders returning from faraway lands.",
     "player_lifestyle": "Now settled in Amsterdam, you spend your days navigating the intricate web of politics, commerce, and diplomacy that defined the era. Your home, De Vijverhof, serves as both your refuge and hub of activity, filled with books, maps, and curiosities collected from your travels.",

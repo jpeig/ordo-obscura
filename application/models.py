@@ -1,6 +1,7 @@
 from . import socketio, redis, emitter
 from flask import Blueprint, g
 from typing import List, Dict
+from textwrap import dedent
 import math
 from datetime import datetime
 import pickle
@@ -165,6 +166,8 @@ class Player:
         print(self.people)
         print(self.objects)
         print(self.places)
+        if isinstance(self.people, list):
+            return self.people + self.objects + self.places
         return self.people | self.objects | self.places
 
     @property
@@ -275,8 +278,38 @@ class Player:
 
 class Time:
     def __init__(self):
+        self._attributes = {
+            'datetime': datetime.now()
+        }
         self.ticker = None
-        self.datetime = datetime.now()
+        self.save_to_redis()
+
+    def save_to_redis(self):
+        redis.set('time', pickle.dumps(self._attributes))
+
+    def __getattr__(self, name):
+        # First, check if the attribute is a class property or method
+        self._attributes = pickle.loads(redis.get('time'))
+
+        if name in self.__class__.__dict__:
+            return object.__getattribute__(self, name)
+        
+        # Then check the _attributes dictionary
+        try:
+            value = self._attributes[name]
+            if isinstance(value, dict):
+                return AttributeDictProxy(self, name)
+            return value
+        except KeyError:
+            raise AttributeError(f"'Time' object has no attribute '{name}'")
+    
+    def __setattr__(self, name, value):
+        # To avoid recursion, only use _attributes for storing player attributes
+        if name in ['_player_id', '_attributes', 'ticker']:
+            super().__setattr__(name, value)
+        else:
+            self._attributes[name] = value
+            self.save_to_redis()
 
     @property
     def status(self):  
@@ -355,15 +388,13 @@ class Journal:
                 event_challenge = self.completed.get(event_challenge_id)
                 player_option = event_challenge['options'][event_challenge['decision']]['player_option']
                 mission_id = event_challenge.get('parent_id',-1)
-                story = f"""{event_challenge['title']}
-                {event_challenge['location']}, {(gametime.datetime - event_challenge['triggerdate']).days} days ago:
-
+                story = dedent(f"""At "{event_challenge['location']}", {(gametime.datetime - event_challenge['triggerdate']).days} days ago:
                 {event_challenge['event_body']}
                 
                 You decided to: "{player_option}"
                 
-                You were {outcome}, leading to the following outcome: "{event['event_body']}"
-                """
+                In this, you were {outcome}, leading to the following outcome: "{event['event_body']}"
+                """)
                 item = {
                     'event_confirmation_id': event_id,
                     'event_challenge_id': event_challenge_id,
@@ -375,7 +406,7 @@ class Journal:
                 }
 
                 log.append(item)
-        return sorted(log, key=lambda x: x['datetime'], reverse=True)
+        return sorted(log, key=lambda x: x['datetime'], reverse=False)
     
 class Game:
     def __init__(self):

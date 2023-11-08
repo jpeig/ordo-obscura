@@ -287,10 +287,10 @@ def has_running_jobs(queue_name):
 
 async def action_generator():
     while True:
-        default_has_running = has_running_jobs('default')
-        high_has_running = has_running_jobs('high')
+        queue_default = has_running_jobs('default') + len(default_queue.jobs)
+        queue_high = has_running_jobs('high') + len(high_queue.jobs)
 
-        if (len(default_queue.jobs) + default_has_running == 0 and len(high_queue.jobs) + high_has_running == 0):
+        if (queue_default == 0 and queue_high == 0):
             if not journal.active and not any(event['type'] == 'mission_select' for event_id, event in journal.scheduled.items()):
                 emitter.emit('generate_action', {'action': 'select_mission', 'queue': 'high'})
             else:
@@ -701,9 +701,6 @@ def get_nearby_difficulty_from(target_difficulty):
     return np.random.choice(difficulty_labels, p=weights)
 
 def compute_event():
-
-    print("computing event")
-
     number_of_choices = random.randint(2, 3)
 
     event_difficulty = get_difficulty_from(player.strength)
@@ -734,14 +731,9 @@ def compute_event():
                         break
             print(f"Mission events: {count_mission_events}")
             if (len(mission_ids)>0):
-                odds_mission_events = (0.8)**count_mission_events
-                count_random_events = sum(1 for event_id, event in journal.scheduled.items() if (event['type'] == 'event_challenge' and event.get('parent_id') == False))
-                odds_random_events = (0.8)**count_random_events
-                chosen = random.choices(['mission','random'], weights=[odds_mission_events, odds_random_events], k=1)[0]
-                if chosen == 'mission':
-                    mission_id = random.choice(mission_ids)
-                else:
-                    mission_id = -1
+                mission_id = random.choice(mission_ids)
+            else:
+                mission_id = -1
         prompt = generate_prompt_event(event_difficulty, mission_id)
         result = asyncio.run(get_ws_result(prompt, json_event_schema))
     event = json.loads(result)
@@ -844,7 +836,7 @@ def get_random_time(time_status):
     minute = random.randint(0, 59)
     return time(hour, minute)
 
-def get_trigger_datetime(date_status, time_status, can_time_array = ['morning','afternoon','evening','night']):
+def get_trigger_datetime(date_status, time_status):
 
     timesequence = ['morning','afternoon','evening','night']
     # get index for each item in can_time_array from timesequence
@@ -887,35 +879,35 @@ def get_trigger_datetime(date_status, time_status, can_time_array = ['morning','
 def generate_prompt_event(challenge_type,mission_id=-1):
 
     if (mission_id != -1):
-        rule_1 = "- Generate an event that is entirely warranted by the mission progression (important) and narrative, using hooks from the current game state."
-        rule_2 = '- Write the event for the set time of day and location that is consistent with the current gamestate, with the aim of further progressing the current mission.'
+        rule_1 = "- Generate an event that hooks in / proceeds from the latest outcome and player action from the mission logbook."
+        rule_2 = '- Align the event for the set time of day and location, with the aim of further progressing the current mission.'
     else:
         rule_1 = '- Generate an singular event based on the player state that disconnected from current mission, using hooks from the current game state.'
         rule_2 = '- Write the event for the set time of day and location that is consistent with the current gamestate, with the aim of introducing new narrative elements to the player.'
 
     match challenge_type:
         case 'routine':
-            rule_3 = """- Design an event that requires the player to carry out a simple task, involving minimal thought or effort. For example, making a familiar meal."""
+            rule_3 = """- Compose the event so that it requires the player to carry out a simple task, involving minimal thought or effort. For example, making a familiar meal."""
         case 'easy':
-            rule_3 = """- Construct an event that demands from the player a bit of contemplation and effort. It should be manageable with a few minor obstacles. """
+            rule_3 = """- Compose the event so that it demands from the player a bit of contemplation and effort. It should be manageable with a few minor obstacles. """
         case 'fair':
-            rule_3 = """- Develop an event where the player is faced with a challenge that needs careful thought to overcome tangible obstacles. For example, navigating through an unfamiliar city without a map."""
+            rule_3 = """- Compose the event so that the player is faced with a challenge that needs careful thought to overcome tangible obstacles. For example, navigating through an unfamiliar city without a map."""
         case 'tricky':
-            rule_3 = """- Designate an event that tests the player's skills and insights intensely. It should demand strategy and a deeper understanding. For example, organizing a complex event with multiple moving parts."""
+            rule_3 = """- Compose the event so that it tests the player's skills and insights intensely. It should demand strategy and a deeper understanding. For example, organizing a complex event with multiple moving parts."""
         case 'challenging':
-            rule_3 = """- Construct an event that exerts the player significantly both mentally and physically. For example, completing a rigorous obstacle course under a time limit."""
+            rule_3 = """- Compose the event so that it exerts the player significantly both mentally and physically. For example, completing a rigorous obstacle course under a time limit."""
         case 'strenuous':
-            rule_3 = """- Compose an event that appears formidable for the player, demanding thorough preparation and determination. For example, learning and mastering a new skill in a short period."""
+            rule_3 = """- Compose the event so that it appears formidable for the player, demanding thorough preparation and determination. For example, learning and mastering a new skill in a short period."""
         case 'hard':
-            rule_3 = """- Produce an event that necessitates the player to go well beyond their usual capabilities, facing what seems nearly overwhelming. For example, leading a team in adverse conditions to achieve a challenging goal."""
+            rule_3 = """- Compose the event so that it necessitates the player to go well beyond their usual capabilities, facing what seems nearly overwhelming. For example, leading a team in adverse conditions to achieve a challenging goal."""
         case 'very hard':
-            rule_3 = """- Design an event that pushes the player into the unknown, urging them to challenge established conventions and boundaries. For example, developing a groundbreaking solution to a significant problem."""
+            rule_3 = """- Compose the event so that it pushes the player into the unknown, urging them to challenge established conventions and boundaries. For example, developing a groundbreaking solution to a significant problem."""
         case 'extreme':
-            rule_3 = """- Script an event at the boundary of what's conceivable, where the player aims to achieve what's seen as a legendary feat. For example, scaling the highest peaks with minimal equipment."""
+            rule_3 = """- Compose the event so that its at the boundary of what's conceivable, where the player aims to achieve what's seen as a legendary feat. For example, scaling the highest peaks with minimal equipment."""
         case 'hardcore':
-            rule_3 = """- Craft an event that appears almost insurmountable to most. The sheer undertaking itself should be a testament to the player's extreme ambition. For example, revolutionizing global perspectives on a deeply entrenched issue."""
+            rule_3 = """- Compose the event so that its almost insurmountable to most. The sheer undertaking itself should be a testament to the player's extreme ambition. For example, revolutionizing global perspectives on a deeply entrenched issue."""
         case 'impossible':
-            rule_3 = """- Design an event that stretches the imagination of what's possible, an event that no one has ever thought or dared to attempt. For example, fundamentally altering the course of human history through a singular act."""  
+            rule_3 = """- Compose the event so that it stretches the imagination of what's possible, an event that no one has ever thought or dared to attempt. For example, fundamentally altering the course of human history through a singular act."""  
         case 'update':
             rule_3 = """- The goal of this event is to update the player on the evolving state of the game."""
 
@@ -935,21 +927,18 @@ def generate_prompt_event(challenge_type,mission_id=-1):
 
      """
     prompt = textwrap.dedent(f"""
-    {return_intro("event writer", "generating a player event for a a mission in JSON format")}
-    
-    Use this info to determine whether or not the player needs to perform a skill check:
-    'Insight' revolves around the realm of deep intellectual exploration and esoteric wisdom. Rooted in the synthesis of intuitive perception with structured thought, it captures the essence of understanding phenomena that often transcend conventional boundaries.
-    'Force' is the confluence of physical might with the ideals of principled leadership. It emphasizes the exertion of authority driven by both inner strength and a commitment to honorable action.
-    'Diplomacy', at its core, is the art of navigating and harmonizing interpersonal relationships. It accentuates the importance of building bridges, fostering communal bonds, and skillfully managing social dynamics.
-    
+    {return_intro("event writer", "generating a player event for a a mission in JSON format")}   
     {return_profile()}
     {return_character()}
     {return_connections()}
     {return_habitus()}
+    Use this info to determine whether or not the player needs to perform a skill check:
+    'Insight' revolves around the realm of deep intellectual exploration and esoteric wisdom. Rooted in the synthesis of intuitive perception with structured thought, it captures the essence of understanding phenomena that often transcend conventional boundaries.
+    'Force' is the confluence of physical might with the ideals of principled leadership. It emphasizes the exertion of authority driven by both inner strength and a commitment to honorable action.
+    'Diplomacy', at its core, is the art of navigating and harmonizing interpersonal relationships. It accentuates the importance of building bridges, fostering communal bonds, and skillfully managing social dynamics.
     {return_mission(mission_id=mission_id)}    
     {return_instructions(instructions)}
     """)
-
     print(prompt)
     return prompt
 
@@ -1211,8 +1200,7 @@ def return_profile(event = None):
     Your name: {player.name} (this is you - don't refer to yourself from the third perspective!)
     Your age: {player.age}
     Your occupation: {player.occupation}
-    Your location:{player.location}
-    """
+    Your location:{player.location}"""
     if event is None:
         return profile
     else:
@@ -1222,19 +1210,17 @@ def return_profile(event = None):
     return profile
 
 def return_character():
-    character = f"""
-    Your worldview: {player.worldview_str}
+    character = f"""Your worldview: {player.worldview_str}
     Your social class: {player.socialclass_str}
     Your personality: {player.personality_str}
     Your traits: {player.traits_str}
-    Your communication style: {player.communication_str}
-    """
+    Your communication style: {player.communication_str}"""
     return character
 
 def return_connections():
     people = ""
     standing = ""
-    notoriety = f"Your notoriety: {player.notoriety_str}\n\n"
+    notoriety = f"Your notoriety: {player.notoriety_str}\n"
     if len(player.standing) > 1:
         standing= f"Your standing: {player.standing}\n\n"
     if len(player.sig_people_str) > 1:
@@ -1245,20 +1231,20 @@ def return_journal():
     # summary + last events/actions
     summary = ""
     if len(journal.summary) > 1:
-        summary = f"Your journal: {player.background}\n\n"
+        summary = f"Your journal: {player.background}\n"
     return summary
 
 def return_habitus():
     lifestyle = ""
     objects = ""
     places = ""
-    finance = f"Your financial health: {player.financial_health_str}\n\n"
+    finance = f"Your financial health: {player.financial_health_str}\n"
     if len(player.lifestyle) > 1:
         lifestyle = f"Your lifestyle: {player.lifestyle}\n\n"
     if len(player.sig_places_str) > 1:
-        places = f"Your significant places:\n{player.sig_places_str}\n\n"
+        places = f"Your significant places:\n{player.sig_places_str}\n"
     if len(player.sig_objects_str) > 1:
-        objects = f"Your significant objects:\n{player.sig_objects_str}\n\n"
+        objects = f"Your significant objects:\n{player.sig_objects_str}\n"
     return places + objects + finance + lifestyle
 
 def return_mission(mission_id = -1, event_id = -1):
@@ -1269,12 +1255,12 @@ def return_mission(mission_id = -1, event_id = -1):
         return ""
     else:
         mission = journal.active.get(mission_id)
-        print(mission)
         mission = mission['missions'][mission['decision']]
         mission = mission['title'] + ":  " + mission['narrative']
-        mission = f"# The current active mission (important):\n{mission}"
+        mission = f"### JOURNAL:
+        The current active mission (important):\n{mission}"
         counter = 0
-        progress = "\n\nYou made the following progress on this mission (important):\n"
+        progress = "\n\n# Your mission log:\n"
         for event in journal.readme:
             if (event.get('mission_id') == mission_id):
                 progress += event.get('story') + "\n"
@@ -1292,20 +1278,18 @@ def return_event(event = None, executed_option = None):
     return event
 
 def return_intro(role, task):
-    intro = f"""### Input:
+    intro = f"""### SYSTEM:
     You are a {role} for grand strategy games. 
     The theme of the game is the (Dutch) Golden Age of the Baroque era.              
     You are tasked with {task} that is consistent with the current gamestate.
-
-    The following is the gamestate that you need to analyze:"""
+    
+    ### GAMESTATE:"""
     return intro
 
 def return_instructions(input):
     instructions = f"""
     ### Instruction:
     Here are some specific guidelines you must follow:
-    - Always write in English in the SECOND perspective - as if written for the player. E.g. "You have.." or "You are.." or "You need to.." or "Your x.." or "You are facing..".
-    {input}
-    
+    - Always write in English in the SECOND perspective - as if written for the player. E.g. "You have.." or "You are.." or "You need to.." or "Your x.." or "You are facing..".{input}
     ### Response:"""
     return instructions

@@ -658,7 +658,11 @@ $(document).ready(function () {
         }
         if (event.key === 't') {  // Checking for both key and keyCode for wider compatibility
             console.log("t pressed");
-            socket.emit('commandKeyPressed', { message: 'game.time' });
+            socket.emit('commandKeyPressed', { message: 'game.gametime' });
+        }
+        if (event.key === 'g') {  // Checking for both key and keyCode for wider compatibility
+            console.log("g pressed");
+            socket.emit('commandKeyPressed', { message: 'game.gm' });
         }
     });
     

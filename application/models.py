@@ -235,7 +235,7 @@ class Player:
     @property
     def sig_people_str(self):
         try:
-            return '\n'.join([f"{person}: {details['significance']} {details['disposition'].capitalize()}" for person, details in self.people.items() if details.get('significant', False)])
+            return '\n'.join([f"{person}: {details['significance']} Their disposition towards me is: '{details['disposition'].lower()}'" for person, details in self.people.items() if details.get('significant', False)])
         except:
             try:
                 return self.people[0]
@@ -388,7 +388,7 @@ class Journal:
                 event_challenge = self.completed.get(event_challenge_id)
                 player_option = event_challenge['options'][event_challenge['decision']]['player_option']
                 mission_id = event_challenge.get('parent_id',-1)
-                story = dedent(f"""At "{event_challenge['location']}", {(gametime.datetime - event_challenge['triggerdate']).days} days ago:
+                story = dedent(f"""At "{event_challenge['location']}", {(gametime.datetime - event_challenge['triggerdate']).days} days and {(gametime.datetime - event_challenge['triggerdate']).seconds/3600} ago:
                 {event_challenge['event_body']}
                 
                 You decided to: "{player_option}"
@@ -439,6 +439,8 @@ class Game:
         
     def decide(self, proposal):
         if proposal['action'] == 'execute_option':
+            return True
+        if proposal['action'] == 'summarize_journal':
             return True
         if proposal['action'] == 'select_mission':
             return True

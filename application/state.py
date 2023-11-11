@@ -57,6 +57,8 @@ def compute_next_state(accepted_proposal: Dict):
         return WIZARD_UPDATING()
     if (accepted_proposal['action'] == "select_mission"):
         return MISSION_COMPUTING()
+    if (accepted_proposal['action'] == "summarize_journal"):
+        return REFLECT_COMPUTING()
     if (accepted_proposal['action'] == "compute_event"):
         return EVENT_COMPUTING()
     if (accepted_proposal['action'] == "compute_concept"):
@@ -142,7 +144,8 @@ class CONCEPT_COMPUTING(GameState):
         compute_concept()
 
 class REFLECT_COMPUTING(GameState):
-    def transition(self, accepted_proposal):
+    def enqueue(self, accepted_proposal):
+        summarize_journal()
         return
     
 class GAME_TICKING(GameState):
@@ -292,7 +295,7 @@ async def action_generator():
 
         if (queue_default == 0 and queue_high == 0):
             if not journal.active and not any(event['type'] == 'mission_select' for event_id, event in journal.scheduled.items()):
-                emitter.emit('generate_action', {'action': 'select_mission', 'queue': 'high'})
+                emitter.emit('generate_action', {'action': 'select_mission', 'queue': 'default'})
             else:
                 odds_events = (0.6)**len(journal.scheduled)
                 odds_concepts = (0.6)**(len(player.items)/8)
@@ -404,7 +407,7 @@ def build_request(prompt,json_schema):
         'eta_cutoff': 0,  # In units of 1e-4
         'tfs': 1,
         'top_a': 0,
-        'repetition_penalty': 1.2,
+        'repetition_penalty': 1,
         'repetition_penalty_range': 0,
         'top_k': 100,
         'min_length': 0,
@@ -512,12 +515,58 @@ def update_standing():
 def update_objects():
     return
 
+def generate_prompt_journal():
+
+    instructions = f"""- Analyse the JOURNAL and write a SPR for it. List specific events, actors, objects, locations, decisions, and consequences. Be precise.
+    - Render the SPR as a distilled list of succinct statements, assertions, associations, concepts, analogies, and metaphors. The idea is to capture as much, conceptually, as possible but with as few words as possible. Write it in a way that makes sense to you, as the future audience will be another language model, not a human.
+    - Be sure the give most weight to the most recent consequences and player decisions.
+    - Conjecture what happens in the next event.
+    """
+    prompt = textwrap.dedent(f"""
+    ### System:
+    You are a Sparse Priming Representation (SPR) writer for the game events stored in the Player's Journal.
+    An SPR is a particular kind of use of language for advanced NLP, NLU, and NLG tasks, particularly useful for the latest generation Large Language Models (LLMs). 
+    LLMs are a kind of deep neural network. They have been demonstrated to embed knowledge, abilities, and concepts, ranging from reasoning to planning, and even to theory of mind. These are called latent abilities and latent content, collectively referred to as latent space. 
+    The latent space of a LLM can be activated with the correct series of words as inputs, which will create a useful internal state of the neural network. This is not unlike how the right shorthand cues can prime a human mind to think in a certain way. 
+    Like human minds, LLMs are associative, meaning you only need to use the correct associations to "prime" another model to think in the same way.
+    
+    Your mission is to create a SPR for the Journal of the player and output it in JSON. 
+    The Journal contains all events and decision the player encountered. The theme of the game is the (Dutch) Golden Age of the Baroque era. 
+                                 
+    ### Character:
+    {return_profile()}
+    {return_character()}
+    {return_connections()}
+    {return_habitus()}
+
+    ### Journal:
+    {return_allevents()}
+
+    ### Instruction: 
+    {return_instructions(instructions)}
+    """)
+    print(prompt)
+    return prompt
+
+
 def summarize_journal():
+
+    json_event_schema = get_jsonschema('spr_schema.jinja')
+
+    prompt = generate_prompt_journal()
+    result = asyncio.run(get_ws_result(prompt, json_event_schema))
+    result = json.loads(result)
+
+    journal.spr = result
     return
 
 def complete_event(accepted_proposal: Dict):
     event_id = accepted_proposal['event_id']
-    event = journal.scheduled.get(event_id)
+    event = journal.scheduled.get(event_id, False)
+    if (event == False):
+        print("Event not found")
+        socketio.emit('remove_event_modal', {'event_id': event_id})
+        return
     event['decision'] = accepted_proposal['option_id']
     if event['type'] == 'mission_select':
         journal.active[event_id] = event
@@ -526,7 +575,6 @@ def complete_event(accepted_proposal: Dict):
         journal.completed[event_id] = event
         compute_event_response(event_id, event)
     journal.scheduled.pop(event_id)
-    print(journal.scheduled.get(event_id))
     socketio.emit('remove_event_modal', {'event_id': event_id})
 
 def compute_event_response(event_id, event):
@@ -545,7 +593,7 @@ def compute_event_response(event_id, event):
         if (outcome <= 0):
             effects = choice['failure_effects']
             response['title'] = "Failure!"
-        response['event_body'] = effects['narrative_effects']
+        response['event_body'] = effects['event_body']
         response['options'] = [
             {"player_option": "Continue"}
         ]
@@ -571,7 +619,9 @@ def compute_event_response(event_id, event):
                 # case 'item_change':
                 #     update_objects()
                 #     pass
-        summarize_journal()
+        emitter.emit('generate_action', {'action': 'summarize_journal', 'queue': 'high'})
+
+        print(f"Event is confirmed")
 
     # json_schema = get_jsonschema('event_response_schema.jinja')
     # prompt = generate_prompt_action_analysis(event_id)
@@ -640,29 +690,6 @@ def generate_prompt_event_response():
 
 def generate_prompt_mission_evaluation():
     print("generating mission evaluation")
-
-def generate_prompt_action_analysis(event_id):
-
-    instructions = f"""   
-    - Understand the the player's current location and mission, player attributes, people, conditions and characteristics, player holdings, gear and assets, player relationships.
-    - Generate an analysis of the chosen player action that is based on the player's current state, including their relevant characteristics, the action they picked, the time of day and and the event itself.
-    - The response must include the likelihood of a positive outcome, the effect of the action on the player, and whether the action requires further player actions.
-    - NEVER use the example event from the example JSON above. Be be creative and think outside the box.
-    """
-    prompt = textwrap.dedent(f"""
-    {return_intro("scenario analyst", "the analysis of a player's actions for a a mission in JSON format")}
-    {return_profile()}
-    {return_character()}
-    {return_connections()}
-    {return_habitus()}
-    {return_mission(event_id=event_id)}
-    {return_event(event_id)}
-    {return_instructions(instructions)}
-    """)
-
-    print(prompt)
-    return prompt
-
 
 def get_difficulty_from(target):
 
@@ -823,13 +850,13 @@ def retrieve_must_date(must_trigger):
 def get_random_time(time_status):
     # Handling time
     if time_status == 'morning':
-        hour = random.randint(6, 11)
+        hour = random.randint(7, 11)
     elif time_status == 'afternoon':
         hour = random.randint(12, 17)
     elif time_status == 'evening':
         hour = random.randint(18, 23)
     elif time_status == 'night':
-        hour = random.randint(0, 5)
+        hour = random.randint(0, 6)
     else:
         raise ValueError("Invalid time_status")
 
@@ -839,6 +866,13 @@ def get_random_time(time_status):
 def get_trigger_datetime(date_status, time_status):
 
     timesequence = ['morning','afternoon','evening','night']
+
+    if date_status is False:
+        date_status = 'tomorrow'
+
+    if time_status is False:
+        time_status = 'afternoon'
+
     # get index for each item in can_time_array from timesequence
     time_status_index = timesequence.index(time_status)
     game_time_status_index = timesequence.index(gametime.status)
@@ -879,10 +913,10 @@ def get_trigger_datetime(date_status, time_status):
 def generate_prompt_event(challenge_type,mission_id=-1):
 
     if (mission_id != -1):
-        rule_1 = "- Generate an event that hooks in / proceeds from the latest outcome and player action from the mission logbook."
+        rule_1 = '- The event should align with the current mission.'
         rule_2 = '- Align the event for the set time of day and location, with the aim of further progressing the current mission.'
     else:
-        rule_1 = '- Generate an singular event based on the player state that disconnected from current mission, using hooks from the current game state.'
+        rule_1 = '- The event should align with the last event and gamestate.'
         rule_2 = '- Write the event for the set time of day and location that is consistent with the current gamestate, with the aim of introducing new narrative elements to the player.'
 
     match challenge_type:
@@ -911,32 +945,45 @@ def generate_prompt_event(challenge_type,mission_id=-1):
         case 'update':
             rule_3 = """- The goal of this event is to update the player on the evolving state of the game."""
 
-    instructions = f"""   
+    instructions = f"""
+    - Write the event_body directly from on the proceeds and analysis from the last event in the "### Journal".
+    - Important: do not repeat the last event. Instead, build on it.
     {rule_1}
+    - Write the event_body briefly and succinctly (max 100 words), and keep it easy to read.
+    - Write the event based on the input provided by "Next_event" in the "### Journal".
+
+    # Other rules
     - Decide on the event location. Ensure it is not too far away from the current location.
     - Decide on the time of day it should trigger. This can be either morning, afternoon, evening or night.
     {rule_2}
     {rule_3}
-    - Important: write the event_body briefly and succinctly (max 100 words), and keep it easy to read. Lead the story towards a pivotal moment where a player decision or action needs to be made/taken. But never end the event with rhetorical questions for the player (e.g. "What will you do?").
     - Write the player_options in the order of the difficulty level, from easiest to hardest. The player must pick only 1 option.
-    - Always directly branch off the options from the event_body. Write in the present tense and second person.
-    - For each option determine whether or not (True or False) the player should perform a skill check, or a payment to perform the action. Do not mention this anywhere else.
-    - For the gameplay effects/consequences of each option, determine whether or not (True or False) the player's stats or financial situation would change. Do not mention this anywhere else.
-    - Ensure the booleans for each option are in line with the narrative consequences of executing the option.
-    - For each option/decision write a short line of internal dialogue for the player, that is consistent with the player communication style, character and the consequences of the option. Write in the present tense and second person.
+    - For each option determine whether or not (True or False) the player should perform a skill check, or a payment to perform the action. Do not mention this anywhere else. Use the following info to determine whether or not the player needs to perform a skill check:
+    'Insight' revolves around the realm of deep intellectual exploration and esoteric wisdom. Rooted in the synthesis of intuitive perception with structured thought, it captures the essence of understanding phenomena that often transcend conventional boundaries.
+    'Force' is the confluence of physical might with the ideals of principled leadership. It emphasizes the exertion of authority driven by both inner strength and a commitment to honorable action.
+    'Diplomacy', at its core, is the art of navigating and harmonizing interpersonal relationships. It accentuates the importance of building bridges, fostering communal bonds, and skillfully managing social dynamics.  
+    - For the event_body / narrative effects of each option: write in the present tense and second person (e.g. "You managed to..."). Always directly branch off the options from the event_body. 
+    - For the gameplay_effects of each option: determine whether or not (True or False) the player's stats or financial situation would change. Do not mention this anywhere else.
+    - Ensure the booleans for each option are in line with the event_body / narrative effects of executing the option.
+    - For each option/decision write a short line of internal dialogue for the player, that is consistent with the player communication style, character and the consequences of the option. Write in the present tense and first person.
 
-     """
+    Important: focus on the input provided by Next_event in the "### Journal".
+    """
     prompt = textwrap.dedent(f"""
-    {return_intro("event writer", "generating a player event for a a mission in JSON format")}   
+    ### System:
+    {return_intro("event writer", "generating a player event for a a mission in JSON format")} 
+
+    ### Character (needed for hooks and ideas):
     {return_profile()}
     {return_character()}
     {return_connections()}
     {return_habitus()}
-    Use this info to determine whether or not the player needs to perform a skill check:
-    'Insight' revolves around the realm of deep intellectual exploration and esoteric wisdom. Rooted in the synthesis of intuitive perception with structured thought, it captures the essence of understanding phenomena that often transcend conventional boundaries.
-    'Force' is the confluence of physical might with the ideals of principled leadership. It emphasizes the exertion of authority driven by both inner strength and a commitment to honorable action.
-    'Diplomacy', at its core, is the art of navigating and harmonizing interpersonal relationships. It accentuates the importance of building bridges, fostering communal bonds, and skillfully managing social dynamics.
-    {return_mission(mission_id=mission_id)}    
+
+    ### Journal (very important!):
+    {return_mission(mission_id=mission_id)}
+    {return_journal()}
+
+    ### Instruction (very important!): 
     {return_instructions(instructions)}
     """)
     print(prompt)
@@ -1200,13 +1247,13 @@ def return_profile(event = None):
     Your name: {player.name} (this is you - don't refer to yourself from the third perspective!)
     Your age: {player.age}
     Your occupation: {player.occupation}
-    Your location:{player.location}"""
+    Your current location:{player.location}"""
     if event is None:
         return profile
     else:
-        location = f"""The time of day: {event['trigger_time_of_day']}
+        time = f"""The time of day: {event['trigger_time_of_day']}
         """
-        profile += location
+        profile += time
     return profile
 
 def return_character():
@@ -1257,17 +1304,32 @@ def return_mission(mission_id = -1, event_id = -1):
         mission = journal.active.get(mission_id)
         mission = mission['missions'][mission['decision']]
         mission = mission['title'] + ":  " + mission['narrative']
-        mission = f"### JOURNAL:
-        The current active mission (important):\n{mission}"
-        counter = 0
-        progress = "\n\n# Your mission log:\n"
-        for event in journal.readme:
-            if (event.get('mission_id') == mission_id):
-                progress += event.get('story') + "\n"
-                counter += 1
-        if counter == 0:
-            progress = ""
-        return mission + progress
+        mission = f"""The current active mission (important):\n{mission}"""
+        return mission
+    
+def return_allevents():
+    counter = 0
+    progress = "\n\n# Your mission log (descending from earliest event to most recent / latest event):\n"
+    for event in journal.readme:
+        counter += 1
+        if counter == len(journal.readme):
+            # perform some code if this is the last event in the list
+            progress += "\nThis is the latest event in your mission log:\n"
+        progress += event.get('story') + "\n"
+    if counter == 0:
+        progress = ""
+    return progress
+    
+def return_journal():
+        progress = ""
+        if hasattr(journal, 'spr'):
+            progress = f"""Last event: \n{journal.readme[-1].get('story')}
+            Analysis of last event: {journal.spr['consequences_analysis_of_last_event']}\n
+            Hooks to earlier events: {journal.spr['hooks_to_earlier_events']}\n
+            Hooks to gamestate: {journal.spr['hooks_to_game_state']}\n
+            Next_event (!!!Important!!!): {journal.spr['next_event_narrative']}
+            """
+        return progress
 
 def return_event(event = None, executed_option = None):
     if not journal.scheduled or event is None:
@@ -1278,18 +1340,16 @@ def return_event(event = None, executed_option = None):
     return event
 
 def return_intro(role, task):
-    intro = f"""### SYSTEM:
-    You are a {role} for grand strategy games. 
+    intro = f"""You are a {role} for grand strategy games. 
     The theme of the game is the (Dutch) Golden Age of the Baroque era.              
     You are tasked with {task} that is consistent with the current gamestate.
-    
-    ### GAMESTATE:"""
+    """
     return intro
 
 def return_instructions(input):
     instructions = f"""
-    ### Instruction:
-    Here are some specific guidelines you must follow:
+
+    # Most important rules:
     - Always write in English in the SECOND perspective - as if written for the player. E.g. "You have.." or "You are.." or "You need to.." or "Your x.." or "You are facing..".{input}
     ### Response:"""
     return instructions

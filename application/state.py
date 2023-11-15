@@ -3,7 +3,7 @@ from jinja2 import TemplateNotFound, Template
 from . import socketio, rq, emitter, redis
 from .models import gametime, player, journal, game
 import os
-from typing import Dict
+from typing import Dict, List
 from config import Config
 import numpy as np
 import asyncio
@@ -12,6 +12,7 @@ import textwrap
 import math
 import threading
 import json
+from IPython.display import display, Markdown
 import sys
 import random
 import websockets
@@ -20,6 +21,14 @@ from functools import partial
 from threading import Timer
 from datetime import datetime, timedelta, time
 from rq import Worker
+from lmformatenforcer import JsonSchemaParser
+from pydantic import BaseModel
+import openai
+
+# Modify OpenAI's API key and API base to use vLLM's API server.
+openai.api_key = "EMPTY"
+openai.api_base = "http://host.docker.internal:9999/v1"
+
 
 URI_WS = Config.OOB_URI_WS
 state = Blueprint('state', __name__,
@@ -95,6 +104,7 @@ class WIZARD_UPDATING(GameState):
         return False
     def transition(self, accepted_proposal=None):
         calculate_stats(accepted_proposal)
+        test_vllm()
 
 class TIME_LOCKED(GameState):
     def can_init_game(self):
@@ -162,6 +172,66 @@ class GAME_TICKING(GameState):
 #     def run(self):
 #         while not self.finished.wait(self.interval):
 #             self.function(*self.args, **self.kwargs)
+
+
+def test_vllm():
+    class AnswerFormat(BaseModel):
+        first_name: str
+        last_name: str
+        year_of_birth: int
+        num_seasons_in_nba: int
+
+    DEFAULT_SYSTEM_PROMPT = """\
+    You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.\n\nIf a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information.\
+    """
+
+    def get_prompt(message: str, system_prompt: str = DEFAULT_SYSTEM_PROMPT) -> str:
+        return f'<s>[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n{message} [/INST]'
+
+    models = openai.Model.list()
+    print("Models:", models)
+
+    model = models["data"][0]["id"]
+
+    question = 'Please give me information about Michael Jordan. You MUST answer using the following json schema: '
+    question_with_schema = f'{question}{AnswerFormat.schema_json()}'
+    schema_json = json.dumps(AnswerFormat.schema_json())
+
+    prompt = get_prompt(question_with_schema)
+
+    print("Prompt:")
+    print(prompt)
+    print("Answer, With json schema enforcing:")
+
+    result = openai.Completion.create(
+        model=model,
+        prompt=prompt,
+        max_tokens=600,
+        temperature=0,
+        jsonparser=AnswerFormat.schema_json())
+
+    print(result)
+
+    print("Answer, Without json schema enforcing:")
+    result = openai.Completion.create(
+        model=model,
+        prompt=prompt,
+        max_tokens=600,
+        temperature=0,
+        jsonparser=None)
+
+    print(result)
+
+    # Completion API
+    # stream = False
+    # Chat completion API
+
+    # print("Completion results:")
+    # if stream:
+    #     for c in chat_completion:
+    #         print(c)
+    # else:
+    #     print(chat_completion)
 
 
 def calculate_stats(accepted_proposal):

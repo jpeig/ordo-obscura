@@ -104,7 +104,7 @@ class WIZARD_UPDATING(GameState):
         return False
     def transition(self, accepted_proposal=None):
         calculate_stats(accepted_proposal)
-        test_vllm()
+        # test_vllm()
 
 class TIME_LOCKED(GameState):
     def can_init_game(self):
@@ -125,7 +125,7 @@ class GAME_LOADING(GameState):
         return True
     def transition(self, accepted_proposal):
         load_game(accepted_proposal)
-        launch_game_ui()
+        # launch_game_ui()
 
 class RESPONSE_COMPUTING(GameState):
     def transition(self, accepted_proposal: Dict):
@@ -173,7 +173,6 @@ class GAME_TICKING(GameState):
 #         while not self.finished.wait(self.interval):
 #             self.function(*self.args, **self.kwargs)
 
-
 def test_vllm():
     class AnswerFormat(BaseModel):
         first_name: str
@@ -198,6 +197,7 @@ def test_vllm():
     schema_json = json.dumps(AnswerFormat.schema_json())
 
     prompt = get_prompt(question_with_schema)
+    stream = True
 
     print("Prompt:")
     print(prompt)
@@ -206,32 +206,40 @@ def test_vllm():
     result = openai.Completion.create(
         model=model,
         prompt=prompt,
+        stream=stream,
         max_tokens=600,
         temperature=0,
         jsonparser=AnswerFormat.schema_json())
-
-    print(result)
+    
+    print("Completion results:")
+    if stream:
+        for c in result:
+            sys.stdout.write(c.choices[0].text)
+            sys.stdout.flush()
+    else:
+        print(result)
 
     print("Answer, Without json schema enforcing:")
     result = openai.Completion.create(
         model=model,
         prompt=prompt,
+        stream=stream,
         max_tokens=600,
         temperature=0,
         jsonparser=None)
 
-    print(result)
-
     # Completion API
-    # stream = False
     # Chat completion API
 
-    # print("Completion results:")
-    # if stream:
-    #     for c in chat_completion:
-    #         print(c)
-    # else:
-    #     print(chat_completion)
+    print("Completion results:")
+    if stream:
+        for c in result:
+            sys.stdout.write(c.choices[0].text)
+            sys.stdout.flush()
+    else:
+        print(result.choices[0].text)
+
+
 
 
 def calculate_stats(accepted_proposal):
@@ -592,7 +600,7 @@ def generate_prompt_journal():
     - Be sure the give most weight to the most recent consequences and player decisions.
     - Conjecture what happens in the next event.
     """
-    prompt = textwrap.dedent(f"""
+    prompt = textwrap.dedent(f"""_sec
     ### System:
     You are a Sparse Priming Representation (SPR) writer for the game events stored in the Player's Journal.
     An SPR is a particular kind of use of language for advanced NLP, NLU, and NLG tasks, particularly useful for the latest generation Large Language Models (LLMs). 
@@ -613,7 +621,8 @@ def generate_prompt_journal():
     {return_allevents()}
 
     ### Instruction: 
-    {return_instructions(instructions)}
+    {return_second_person()}
+    {instructions}
     """)
     print(prompt)
     return prompt
@@ -1052,12 +1061,77 @@ def generate_prompt_event(challenge_type,mission_id=-1):
     ### Journal (very important!):
     {return_mission(mission_id=mission_id)}
     {return_journal()}
+    <|end_of_turn|>
 
-    ### Instruction (very important!): 
-    {return_instructions(instructions)}
+    GPT4 Correct User: 
+    ### Instruction: 
+    {return_second_person()}
+    {instructions}
+    <|end_of_turn|>
+    
+    GPT4 Correct Assistant:
     """)
     print(prompt)
     return prompt
+
+
+def process_json(json_strings):
+    # Remove '\t' characters
+    processed_jsons = []
+    for json_string in json_strings:
+        cleaned_string = json_string.replace("\t", "")
+        incorrect_closing_pos = cleaned_string.rfind('"]}')
+        if incorrect_closing_pos != -1:
+            # Remove the incorrect closing and correctly close the JSON
+            last_comma_pos = cleaned_string.rfind(',', 0, incorrect_closing_pos)
+            if last_comma_pos != -1:
+                # Remove the last comma and the incorrect closing, then correctly close the JSON
+                cleaned_string = cleaned_string[:last_comma_pos] + cleaned_string[incorrect_closing_pos:].replace('"]}', '] }')
+            else:
+                # If the last comma is not found, just fix the closing
+                cleaned_string = cleaned_string[:incorrect_closing_pos] + '] }'
+        else:
+            # If the incorrect closing is not found, return the original string
+            cleaned_string = cleaned_string
+        processed_jsons.append(cleaned_string)
+    return '[' + ', '.join(processed_jsons) + ']'
+
+# define a simple coroutine
+async def batch_api(prompts, schemas, temperature, frequency_penalty, emit_progress_max=0):
+    
+    tasks = [concept_generator(prompt, schema, temperature, frequency_penalty, emit_progress_max) for prompt, schema in zip(prompts, schemas)]
+    results = await asyncio.gather(*tasks)
+    results = process_json(results)
+    return json.loads(results)
+
+async def concept_generator(prompt, schema, temperature, frequency_penalty, emit_progress_max):
+    stream = True
+    response = ""
+    result = await openai.Completion.acreate(
+        model=openai.Model.list()["data"][0]["id"],
+        prompt=prompt,
+        max_tokens=3000,
+        temperature=temperature,
+        frequency_penalty=frequency_penalty,
+        stream = True,
+        jsonparser=schema)
+    
+    if stream:
+        async for c in result:
+            # sys.stdout.write(c.choices[0].text)
+            # sys.stdout.flush()
+            if (emit_progress_max!=0):
+                progress = len(c.choices[0].text) / emit_progress_max * 100
+                socketio.emit('update_progress', {'progress': progress})
+            response += c.choices[0].text
+    else:
+        print("result:", result)
+        if (emit_progress_max!=0):
+            print(len(result.choices[0].text))
+            progress = len(result.choices[0].text) / emit_progress_max * 100
+            socketio.emit('update_progress', {'progress': progress})
+        response = json.loads(result.choices[0].text)    
+    return response
 
 def load_game(accepted_proposal: Dict):
     background = f"""Your background: {accepted_proposal['background']}
@@ -1089,50 +1163,91 @@ def load_game(accepted_proposal: Dict):
         player.objects = Config.SKIP_VAL_OBJECTS
         player.places = Config.SKIP_VAL_PLACES
 
-    else:    
-        prompt = generate_item_concepts_start('places')
-        places = player.places
+    else:
 
-        print("places:", places)
+        categories = ['places', 'people', 'objects']
+        schemas = []
+        prompts = []
+        for category in categories:
+            wrapper = {'name': category}
+            match category:
+                case 'places':  
+                    wrapper['item_count'] = str(5 - len(player.places))    
+                case 'people':
+                    wrapper['item_count'] = str(7 - len(player.people))
+                case 'objects':
+                    wrapper['item_count'] = str(3 - len(player.people))
+            schema = get_jsonschema('instancing_schema.jinja',wrapper)
+            prompt = generate_item_concepts(category, schema)
+            schemas.append(schema)
+            prompts.append(prompt)
+
+        concept_list = asyncio.run(batch_api(
+            prompts=prompts, 
+            schemas=schemas,
+            temperature=0.0,
+            frequency_penalty=1.0,
+            emit_progress_max=11000
+            ))
         
-        places.extend([f'location-{i}' for i in range(len(places)+1, 5)])
-        wrapper = {
-            "items" : places,
-            "type" : "places"
-        }
-        json_state_schema = get_jsonschema('state_schema.jinja',wrapper)
-        result = asyncio.run(get_ws_result(prompt, json_state_schema,emit_progress_start=0, emit_progress_max=4500))
-        player.places = {item['name']: {"significance": item['significance'], "owner": item['owner'], "significant": True} for item in json.loads(result).values()}
+        print(concept_list)
 
-        people = player.people
+        concept_list = {k: v for d in concept_list for k, v in d.items()}
 
-        prompt = generate_item_concepts_start('people')
-        people.extend([f'entity-{i}' for i in range(len(people)+1, 7)])
-        wrapper = {
-            "items" : people,
-            "type" : "people"
-        }
-        json_state_schema = get_jsonschema('state_schema.jinja',wrapper)
-        result = asyncio.run(get_ws_result(prompt, json_state_schema,emit_progress_start=1500, emit_progress_max=4500))
-        player.people = {item['name']: {"significance": item['significance'], "location": item['location'], "disposition": item['disposition_towards_player'], "significant": True} for item in json.loads(result).values()}
+        schemas = []
+        prompts = []
 
-        objects = player.objects
+        for category in categories:
+            for concept in concept_list.get(category):
+                wrapper = {'type': category, 'name': concept}
+                schema = get_jsonschema('concept_schema.jinja',wrapper)
+                prompt = populate_item_concept(category, schema)
+                schemas.append(schema)
+                prompts.append(prompt)
 
-        prompt = generate_item_concepts_start('objects')
-        objects.extend([f'object-{i}' for i in range(len(objects)+1, 4)])
-        wrapper = {
-            "items" : objects,
-            "type" : "objects"
-        }
-        json_state_schema = get_jsonschema('state_schema.jinja',wrapper)
-        result = asyncio.run(get_ws_result(prompt, json_state_schema,emit_progress_start=3000, emit_progress_max=4500))
-        player.objects = {item['name']: {"significance": item['significance'],"location": item['location'],"owner": item['owner'], "significant": True} for item in json.loads(result).values()}
-
-        data = transform()
+        items = asyncio.run(batch_api(
+            prompts=prompts, 
+            schemas=schemas,
+            temperature=0.0,
+            frequency_penalty=1.0,
+            emit_progress_max=11000
+            ))
         
-    print(data)
+        print("result:", items)
+
+
+
+    #     player.places = {item['name']: {"significance": item['significance'], "owner": item['owner'], "significant": True} for item in json.loads(result).values()}
+
+    #     people = player.people
+
+    #     prompt = generate_item_concepts_start('people')
+    #     people.extend([f'entity-{i}' for i in range(len(people)+1, 7)])
+    #     wrapper = {
+    #         "items" : people,
+    #         "type" : "people"
+    #     }
+    #     json_state_schema = get_jsonschema('state_schema.jinja',wrapper)
+    #     result = asyncio.run(get_ws_result(prompt, json_state_schema,emit_progress_start=1500, emit_progress_max=4500))
+    #     player.people = {item['name']: {"significance": item['significance'], "location": item['location'], "disposition": item['disposition_towards_player'], "significant": True} for item in json.loads(result).values()}
+
+    #     objects = player.objects
+
+    #     prompt = generate_item_concepts_start('objects')
+    #     objects.extend([f'object-{i}' for i in range(len(objects)+1, 4)])
+    #     wrapper = {
+    #         "items" : objects,
+    #         "type" : "objects"
+    #     }
+    #     json_state_schema = get_jsonschema('state_schema.jinja',wrapper)
+    #     result = asyncio.run(get_ws_result(prompt, json_state_schema,emit_progress_start=3000, emit_progress_max=4500))
+    #     player.objects = {item['name']: {"significance": item['significance'],"location": item['location'],"owner": item['owner'], "significant": True} for item in json.loads(result).values()}
+
+    #     data = transform()
+        
+    # print(data)
     
-    socketio.emit('deploy_start_data', {'data': data})
+    # socketio.emit('deploy_start_data', {'data': data})
     
 def get_jsonschema(filename, items=None):
     file = os.path.join(app.root_path, 'templates', 'schemas', filename)
@@ -1184,41 +1299,49 @@ def generate_state_narrative(brainstorm_results = None):
     {player.starting_data}
     {return_connections()}
     {return_habitus()}
-    {return_instructions(instructions)}
+    ### Instruction: 
+    {return_second_person()}
+    {instructions}
     """)
     
     print(prompt)
     return prompt
     
     
-def generate_item_concepts_start(type):
+def generate_item_concepts(type,json_state_schema):
 
     places = """{
-            "location-[i]": "Your [REDACTED] in [REDACTED]",
-            "location-[i]": "Your [REDACTED] room",
-            "location-[i]": "[REDACTED]",
-            "location-[i]": "[REDACTED] Port",
-            "location-[i]": "[REDACTED] Castle",
-            etc...
+            "places": [
+                "Your REDACTED in REDACTED",
+                "Your REDACTED room",
+                "REDACTED",
+                "REDACTED Port",
+                "REDACTED Castle",
+                ...
+            ]
         }"""
     
-    people = """[
-        "person-[i]": "Your [REDACTED] [REDACTED]",
-        "person-[i]": "[REDACTED] [REDACTED]",
-        "person-[i]": "[REDACTED]",
-        "person-[i]": "[REDACTED] working on your [REDACTED]",
-        etc...
-    ]"""
+    people = """{
+            "people": [
+                "Your [REDACTED] [REDACTED]",
+                "[REDACTED] [REDACTED]",
+                "[REDACTED]",
+                "[REDACTED] working on your [REDACTED]",
+                ...
+            ]
+        }"""
 
-    objects = """[
-            "object-[i]": "Your [REDACTED] in [REDACTED]",
-            "object-[i]": "[REDACTED]",
-            "object-[i]": "Your [REDACTED]",
-            "object-[i]": "Your [REDACTED] of [REDACTED]",
-            "object-[i]": "[REDACTED] the [REDACTED]",
-            "object-[i]": "Your [REDACTED] 'The [REDACTED] of [REDACTED]'",
-            etc...
-        ]"""
+    objects = """{
+            "objects": [
+                "Your [REDACTED] in [REDACTED]",
+                "[REDACTED]",
+                "Your [REDACTED]",
+                "Your [REDACTED] of [REDACTED]",
+                "[REDACTED] the [REDACTED]",
+                "Your [REDACTED] 'The [REDACTED] of [REDACTED]'",
+                ...
+            ]
+        }"""
     
     match type:
         case 'places':
@@ -1239,35 +1362,93 @@ def generate_item_concepts_start(type):
             location_format= f""", at a town, city or points of interest,"""
             rule = '- Be sure to list at least some of the more important gear, outfit and possessions of the player. Do not list locations or places.'
 
-    instructions = f"""
-    - Aim for {type} with flavor that touch upon the player's characteristics, relationships, worldview, personality, social class, occupation and background.
-    - Ensure that the {type} are significant to the player in the sense that the player can interact with them.
+    instructions = f"""- Aim for {type} with flavor that touch upon the player's characteristics, relationships, worldview, personality, social class, occupation and background.
+    - Ensure that the {type} are significant to the player in the sense that the player can engage or interact with them.
     - Exclude {type} that do not align with the player's social class or wealth disposition.
     - Assign specific relatable English or Dutch names to the {type}. Never use jargon, sample or generic names (e.g. "entity-x", "[REDACTED]").
-    - For all {type} in the provided array, expand on their significance to the player, and how the player can interact with it.
-    - Take into account the player's background, relationships and lifestyle when writing the significance of the item.
-    - Be sure to write in second person, always considering the {type} from the perspective of the player. E.g. "You have.." or "You are.." or "You own.." or "Your x..".
-    - Never mention the player in the {type} attributes, instead always refer to the player as 'you' or 'your'.
     - For all {type} in the provided array, ensure each can exist in the baroque era{location_format} and are of significance to the player.
+    - Instances of '{type}' can exclusively be {definition}
+    - Per item, be brief and succinct - just name the item, then proceed with the next entry.
     {rule}
-    
-    {type} can exclusively be {definition}
     """
+
     prompt = textwrap.dedent(f"""
+    ### System:
     {return_intro("expert game state generator/brainstormer", "generating an array of game items in JSON format")}  
+
+    You MUST answer using the following json schema: {json_state_schema}
+
     An example of json output (this is just an example so do not use - ignore the redacted parts):
     {samples}
+
+    ### Character (needed for hooks and ideas):
     {return_profile()}
     {return_character()}
     {player.starting_data}
     {return_connections()}
     {return_habitus()}
-    {return_instructions(instructions)}
+
+    ### Instruction: 
+    {instructions}
+    
+    Assistant:
+    """)
+    
+    print(prompt)
+    return prompt
+
+
+def populate_item_concept(type,json_state_schema):
+    
+    match type:
+        case 'places':
+            definition = "specific places, whether natural or constructed that are of interest to the player. Examples: Cities, your house, natural landscapes, man-made structures, mystical realms."
+            location_format= ""
+
+        case 'people':
+            definition = "humans (EXCLUDING YOURSELF), animals, or sentient beings that are of interest to the player. Examples: Family members, friends, rivals, historical figures, pets, mythical creatures."
+            location_format= f""", at a town, city or points of interest,"""
+
+        case 'objects':
+            definition = "tangible, inanimate items that are of interest to the player. These are typically interactable items that have a physical presence. Examples: Tools, weapons, vehicles, consumables, documents."
+            location_format= f""", at a town, city or points of interest,"""
+
+    instructions = f"""
+    - For all {type} in the provided array, expand on their significance to the player, and how the player can interact with it.
+    - Take into account the player's background, relationships and lifestyle when writing the significance of the item.
+    - Be sure to write in second person, always considering the {type} from the perspective of the player. E.g. "You have.." or "You are.." or "You own.." or "Your x..".
+    - Never mention the player in the {type} attributes, instead always refer to the player as 'you' or 'your'.
+    - For all {type} in the provided array, ensure each can exist in the baroque era{location_format} and are of significance to the player.
+    - Instances of '{type}' can exclusively be {definition}
+    - You MUST answer using the following json schema: {json_state_schema}
+    """
+
+    prompt = textwrap.dedent(f"""
+    ### System:
+    {return_intro("expert game state generator/brainstormer", "generating an array of game items in JSON format")}  
+
+    ### Character (needed for hooks and ideas):
+    {return_profile()}
+    {return_character()}
+    {player.starting_data}
+    {return_connections()}
+    {return_habitus()}
+    <|end_of_turn|>
+
+    GPT4 Correct User: 
+    ### Instruction: 
+    {return_second_person()}
+    {instructions}
+    <|end_of_turn|>
+    
+    GPT4 Correct Assistant:
     """)
     
     print(prompt)
     return prompt
     
+
+
     
 def compute_mission():
     json_schema = get_jsonschema('mission_schema.jinja')
@@ -1303,7 +1484,9 @@ def generate_prompt_mission():
     {return_character()}
     {return_connections()}
     {return_habitus()}
-    {return_instructions(instructions)}
+    ### Instruction: 
+    {return_second_person()}
+    {instructions}
     """)
     return prompt
     
@@ -1416,10 +1599,6 @@ def return_intro(role, task):
     """
     return intro
 
-def return_instructions(input):
-    instructions = f"""
-
-    # Most important rules:
-    - Always write in English in the SECOND perspective - as if written for the player. E.g. "You have.." or "You are.." or "You need to.." or "Your x.." or "You are facing..".{input}
-    ### Response:"""
+def return_second_person():
+    instructions = f"""- Always write in English in the SECOND perspective - as if written for the player. E.g. "You have.." or "You are.." or "You need to.." or "Your x.." or "You are facing.."."""
     return instructions

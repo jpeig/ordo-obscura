@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "{{ items['name'] }}": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": {{ items['item_count'] }},
+      "maxItems": {{ items['item_count'] }},
+      "uniqueItems": true
+    }
+  },
+  "required": ["{{ items['name'] }}"]
+}

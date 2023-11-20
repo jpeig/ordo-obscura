@@ -1,8 +1,7 @@
 {
   "type": "object",
   "properties": {
-    {% for item in items['items'] %}
-    "{{ item }}": {
+    "{{ items['name'] }}": {
       "type": "object",
       "properties": {
         "name": {
@@ -27,7 +26,6 @@
         }
         {% endif %}
       }
-    }{% if not loop.last %},{% endif %}
-{% endfor %}
+    }
   }
 }

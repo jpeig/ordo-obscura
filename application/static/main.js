@@ -23,7 +23,15 @@ $(document).ready(function () {
 
     socket.on('update_progress', function (data) {
         console.log(data);
-        $('#b1').css('width', `${data.progress}%`);
+        // get css width of progress bar
+        var width = $('#b1').css('width');
+        width = parseFloat(width.slice(0, -2));
+        var parentWidth = $('#b1').offsetParent().css('width');
+        parentWidth = parseFloat(parentWidth.slice(0, -2));
+        var percent = 100*width/parentWidth;
+
+        width = percent + data.progress
+        $('#b1').css('width', `${width}%`);
     });
 
     socket.on('blank_canvas', function (data) {

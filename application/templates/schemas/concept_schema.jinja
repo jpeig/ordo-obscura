@@ -6,9 +6,6 @@
       "properties": {
         "name": {
           "type": "string"
-        },
-        "significance": {
-          "type": "string"
         }
         {% if items['type'] == "people" %}
         ,"disposition_towards_player": {
@@ -25,7 +22,19 @@
           "type": "string"
         }
         {% endif %}
-      }
+        ,"significance": {
+          "type": "string"
+        }
+      },
+    {% if items['type'] == "people" %}
+    "required": ["name","significance", "location","disposition_towards_player"]
+    {% endif %}
+    {% if items['type'] == "places" %}
+    "required": ["name","significance","owner"]
+    {% endif %}
+    {% if items['type'] == "objects" %}
+    "required": ["name","significance","owner", "location"]
+    {% endif %}
     }
   }
 }

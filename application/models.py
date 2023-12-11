@@ -10,7 +10,6 @@ models = Blueprint('models', __name__,
                         template_folder='templates',
                         static_folder="static")
 
-
 class AttributeDictProxy:
     def __init__(self, parent, name):
         self._parent = parent
@@ -388,12 +387,16 @@ class Journal:
                 event_challenge = self.completed.get(event_challenge_id)
                 player_option = event_challenge['options'][event_challenge['decision']]['player_option']
                 mission_id = event_challenge.get('parent_id',-1)
-                story = dedent(f"""At "{event_challenge['location']}", {(gametime.datetime - event_challenge['triggerdate']).days} days and {(gametime.datetime - event_challenge['triggerdate']).seconds/3600} ago:
+                character_change = 'character_change' in event['options'][0]['gameplay']
+                standing_change = 'standing_change' in event['options'][0]['gameplay']
+                story = dedent(f"""At "{event_challenge['location']}", {(gametime.datetime - event_challenge['triggerdate']).days} days and {round((gametime.datetime - event_challenge['triggerdate']).seconds/3600)} hours ago:
                 {event_challenge['event_body']}
                 
                 You decided to: "{player_option}"
                 
                 In this, you were {outcome}, leading to the following outcome: "{event['event_body']}"
+                
+                ----------------------------------------
                 """)
                 item = {
                     'event_confirmation_id': event_id,
@@ -401,8 +404,8 @@ class Journal:
                     'mission_id': mission_id,
                     'datetime': event_challenge['triggerdate'],
                     'story': story,
-                    'character_change': event['options'][0]['gameplay_effects'].get('character_change'),
-                    'standing_change': event['options'][0]['gameplay_effects'].get('standing_change')
+                    'character_change': character_change,
+                    'standing_change': standing_change
                 }
 
                 log.append(item)
@@ -468,7 +471,6 @@ class Game:
                 if not isinstance(proposal['speed'], float):
                     print("Speed is not float")
                     return False
-                print("Changing speed")
                 return True
             except KeyError:
                 print("KeyError")

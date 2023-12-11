@@ -4,37 +4,32 @@
     "{{ items['name'] }}": {
       "type": "object",
       "properties": {
-        "name": {
-          "type": "string"
-        }
+        "name": {"type": "string"},
+        "significance": {"type": "string"}
         {% if items['type'] == "people" %}
-        ,"disposition_towards_player": {
-          "type": "string"
-        }
+        ,"disposition_towards_player": {"type": "string"}
         {% endif %}
         {% if items['type'] != "people" %}
-        ,"owner": {
-          "type": "string"
-        }
+        ,"owner": {"type": "string"}
         {% endif %}
         {% if items['type'] != "places" %}
-        ,"location": {
-          "type": "string"
-        }
+        ,"location": {"type": "string"}
         {% endif %}
-        ,"significance": {
-          "type": "string"
-        }
       },
-    {% if items['type'] == "people" %}
-    "required": ["name","significance", "location","disposition_towards_player"]
-    {% endif %}
-    {% if items['type'] == "places" %}
-    "required": ["name","significance","owner"]
-    {% endif %}
-    {% if items['type'] == "objects" %}
-    "required": ["name","significance","owner", "location"]
-    {% endif %}
+      "required": [
+        "name",
+        "significance"
+        {% if items['type'] == "people" %}
+        ,"disposition_towards_player"
+        {% endif %}
+        {% if items['type'] != "people" %}
+        ,"owner"
+        {% endif %}
+        {% if items['type'] != "places" %}
+        ,"location"
+        {% endif %}
+      ]
     }
-  }
+  },
+  "required": ["{{ items['name'] }}"]
 }

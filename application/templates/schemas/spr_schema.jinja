@@ -1,9 +1,9 @@
 {
   "type": "object",
   "properties": {
-    "consequences_analysis_of_last_event": {"type": "string"},
-    "hooks_to_earlier_events": {"type": "string"},
-    "hooks_to_game_state": {"type": "string"},
-    "next_event_narrative": {"type": "string"}
-  }
+    "prop1_consequences_analysis_of_last_event": {"type": "string", "description": "determine the consequences of the last event on the character and mission progression"},
+    "prop2_mission_completed": {"type": "boolean", "description": "determine whether the last event completed the big picture mission"},
+    "prop3_next_event_narrative": {"type": "string", "description": "speculate what could be the next event that would further progress the mission"}
+  },
+  "required": ["prop1_consequences_analysis_of_last_event", "prop2_mission_completed", "prop3_next_event_narrative"]
 }

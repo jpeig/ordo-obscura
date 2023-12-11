@@ -84,6 +84,7 @@ def handle_updated_output(data):
     print(("been here"))
     proposal = {
     'action': data.get('action'),
+    'mission_id': data.get('mission_id'),
     'queue': data.get('queue')
     }
     game.present(proposal)

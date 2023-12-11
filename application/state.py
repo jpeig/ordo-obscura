@@ -1,31 +1,24 @@
-from flask import Blueprint, render_template, abort, request, jsonify, redirect, url_for, g, current_app as app
+from flask import Blueprint, render_template, current_app as app
 from jinja2 import TemplateNotFound, Template
-from . import socketio, rq, emitter, redis
+from . import socketio, emitter
 from .models import gametime, player, journal, game
 import os
+import re
 from typing import Dict, List
 from config import Config
 import numpy as np
 import asyncio
-import re
 import textwrap
 import math
 import threading
 import json
-from IPython.display import display, Markdown
 import sys
 import random
 import websockets
-import requests
-from functools import partial
-from threading import Timer
 from datetime import datetime, timedelta, time
-from rq import Worker
-from lmformatenforcer import JsonSchemaParser
 from pydantic import BaseModel
 import openai
 from collections import defaultdict
-
 
 # Modify OpenAI's API key and API base to use vLLM's API server.
 openai.api_key = "EMPTY"
@@ -37,24 +30,41 @@ state = Blueprint('state', __name__,
                         template_folder='templates',
                         static_folder="static")
 
-high_queue = rq.get_queue('high')
-default_queue = rq.get_queue('default')
+default_queue = asyncio.Queue(maxsize=0)
+high_queue = asyncio.Queue(maxsize=0)
+
+async def queuing(proposal, next_state):
+        print("Queued state: ", next_state)
+        game.state = next_state
+        if (proposal.get('queue') == 'default'):
+            try:
+                print("Enqueuing default")
+                default_queue.put_nowait(game.state.enqueue(proposal,))
+            except asyncio.QueueFull:
+                print("Queue is full")
+        elif (proposal.get('queue') == 'high'):
+            try:
+                print("Enqueuing high")
+                high_queue.put_nowait(game.state.enqueue(proposal,))
+            except asyncio.QueueFull:
+                print("Queue is full")
 
 @emitter.on('accepted_proposal')
 def handle_accepted_proposal(proposal):
     next_state = compute_next_state(proposal)
     if proposal.get('queue') != None:
-        print("Queued state: ", next_state)
-        game.state = next_state
-        if (proposal.get('queue') == 'default'):
-            default_queue.enqueue(game.state.enqueue, args=(proposal,))
-        elif (proposal.get('queue') == 'high'):
-            high_queue.enqueue(game.state.enqueue, args=(proposal,))
+        try:
+            loop = asyncio.get_event_loop()
+            print("Adding task")
+            loop.create_task(queuing(proposal, next_state))
+        except RuntimeError:
+            # If no event loop is running, start one temporarily
+            asyncio.run(queuing(proposal, next_state))
+        print("Task added")
     else:
-        print("Next state: ", next_state)
         game.state = next_state
         game.state.transition(proposal)
-      
+
 def compute_next_state(accepted_proposal: Dict):
     if (accepted_proposal['action'] == "init_app"):
         return WIZARD_WAITING()
@@ -89,7 +99,7 @@ class GameState():
         return True
     def transition(self, game, accepted_proposal=None):
         print("Transitioning to next state")
-    def enqueue(self, game, accepted_proposal):
+    async def enqueue(self, game, accepted_proposal):
         print("Enqueuing next state")
 
 class WIZARD_WAITING(GameState):
@@ -143,31 +153,29 @@ class GAME_PAUSING(GameState):
             asyncio.run(stop_ticker())
 
 class MISSION_COMPUTING(GameState):
-    def enqueue(self, accepted_proposal):
+    async def enqueue(self, accepted_proposal):
         print("computing mission")
         compute_mission()
 
 class EVENT_COMPUTING(GameState):
-    def enqueue(self, accepted_proposal):
+    async def enqueue(self, accepted_proposal):
         compute_event()
 
 class CONCEPT_COMPUTING(GameState):
-    def enqueue(self, accepted_proposal):
+    async def enqueue(self, accepted_proposal):
         compute_concept()
 
 class REFLECT_COMPUTING(GameState):
-    def enqueue(self, accepted_proposal):
-        summarize_journal()
+    async def enqueue(self, accepted_proposal):
+        summarize_journal(accepted_proposal['mission_id'])
         return
     
 class GAME_TICKING(GameState):
     def transition(self, accepted_proposal):
         try:
-            print("Create loop")
             loop = asyncio.get_event_loop()
             loop.create_task(start_ticker(accepted_proposal['speed']))
         except RuntimeError:
-            print("RuntimeError")
             asyncio.run(start_ticker(accepted_proposal['speed']))
 
 # class RepeatingTimer(Timer):
@@ -341,12 +349,12 @@ def launch_game_ui():
         schema = get_jsonschema('narrative_state_schema.jinja')
         prompt = generate_state_narrative()
 
-        state_narrative = asyncio.run(batch_api(
+        state_narrative = batch_api(
             prompts=prompt, 
             schemas=schema,
             temperature=0.0,
             frequency_penalty=1.0
-            ))
+            )
         
         print("Result: ", state_narrative)
     
@@ -361,36 +369,43 @@ def launch_game_ui():
 
     journal.completed['background']= background
 
-    asyncio.run(action_generator())
+    asyncio.run(game_loop())
 
-def has_running_jobs(queue_name):
-    # Get all the workers
-    workers = Worker.all(connection=default_queue.connection)
-    
-    # Filter workers based on the queue_name
-    relevant_workers = [worker for worker in workers if queue_name in worker.queue_names()]
-    
-    for worker in relevant_workers:
-        # Check if the worker is currently working on a job
-        if worker.get_current_job() is not None:
-            return True
-    return False
+async def game_loop():
+    asyncio.create_task(action_generator())
+    asyncio.create_task(action_consumer())
+    while True:
+        # You can add any periodic checks or maintenance tasks here
+        await asyncio.sleep(10)  # Sleep for a while before continuing the loop
+
 
 async def action_generator():
     while True:
-        queue_default = has_running_jobs('default') + len(default_queue.jobs)
-        queue_high = has_running_jobs('high') + len(high_queue.jobs)
-
-        if (queue_default == 0 and queue_high == 0):
+        if (default_queue.empty() and high_queue.empty()):
             if not journal.active and not any(event['type'] == 'mission_select' for event_id, event in journal.scheduled.items()):
                 emitter.emit('generate_action', {'action': 'select_mission', 'queue': 'default'})
-            else:
-                odds_events = (0.6)**len(journal.scheduled)
-                odds_concepts = (0.6)**(len(player.items)/8)
-                if (odds_events > 0.1):
-                    decide = random.choices(['compute_event','compute_concept'], weights=[odds_events, odds_concepts], k=1)[0]
-                    emitter.emit('generate_action', {'action': decide, 'queue': 'default'})
-        await asyncio.sleep(5)  # async sleep
+            elif journal.active and not any(event['type'] == 'event_challenge' or event['type'] == 'event_confirmation' for event_id, event in journal.scheduled.items()):
+                emitter.emit('generate_action', {'action': 'compute_event', 'queue': 'default'})
+                #     decide = random.choices(['compute_event','compute_concept'], weights=[odds_events, odds_concepts], k=1)[0]
+                #     emitter.emit('generate_action', {'action': decide, 'queue': 'default'})
+        await asyncio.sleep(1)
+
+# coroutine to consume work
+async def action_consumer():
+    print('Consumer: Running')
+    # consume work
+    while True:
+        # get a unit of work
+        try:
+            item = high_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            try:
+                item = default_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                await asyncio.sleep(1)
+                continue
+        # report
+        await item
 
 # Using partial to encapsulate the argument ()
 async def start_ticker(speed):
@@ -481,7 +496,7 @@ def build_request(prompt,json_schema):
     request = {
         'prompt': prompt,
         'json_schema': json_schema,
-        'max_new_tokens': 3000,
+        'max_new_tokens': 8000,
         'auto_max_new_tokens': False,
         'max_tokens_second': 0,
         # Generation params. If 'preset' is set to different than 'None', the values
@@ -562,10 +577,10 @@ def roll_dice_for_level(level):
 def roll_all_dice_for(choice):
 
     difference = 0
-    challenges = choice.get('challenges')
+    challenges = choice['challenges']
     challenge_rolls = {}
 
-    if(challenges.get('perform_insight_check')):
+    if('insight' in challenges):
         challenge_roll = roll_dice_for_level(choice['difficulty'])
         challenge_rolls['Insight'] = challenge_roll
         stat_roll = roll_dice_for_level(player.insight)
@@ -574,7 +589,7 @@ def roll_all_dice_for(choice):
         print(f"Total for Challenge level {choice['difficulty']}: {challenge_roll}")
         print(f"Total for Player insight level {player.insight}: {stat_roll}")
 
-    if(challenges.get('perform_diplomacy_check')):
+    if('diplomacy' in challenges):
         challenge_roll = roll_dice_for_level(choice['difficulty'])
         challenge_rolls['Diplomacy'] = challenge_roll
         stat_roll = roll_dice_for_level(player.diplomacy)
@@ -583,7 +598,7 @@ def roll_all_dice_for(choice):
         print(f"Total for Challenge level {choice['difficulty']}: {challenge_roll}")
         print(f"Total for Player diplomacy level {player.diplomacy}: {stat_roll}")
 
-    if(challenges.get('perform_force_check')):
+    if('force' in challenges):
         challenge_roll = roll_dice_for_level(choice['difficulty'])
         challenge_rolls['Force'] = challenge_roll
         stat_roll = roll_dice_for_level(player.force)
@@ -603,12 +618,13 @@ def update_standing():
 def update_objects():
     return
 
-def generate_prompt_journal():
+def generate_prompt_journal(mission_id):
 
     instructions = f"""- Analyse the JOURNAL and write a SPR for it. List specific events, actors, objects, locations, decisions, and consequences. Be precise.
     - Render the SPR as a distilled list of succinct statements, assertions, associations, concepts, analogies, and metaphors. The idea is to capture as much, conceptually, as possible but with as few words as possible. Write it in a way that makes sense to you, as the future audience will be another language model, not a human.
-    - Be sure the give most weight to the most recent consequences and player decisions.
-    - Conjecture what happens in the next event.
+    - In prop1_consequences_analysis_of_last_event, analyse the consequences of the last event. What are the consequences for the player? What are the consequences for the other actors? What are the consequences for the objects? What are the consequences for the locations? What are the consequences for the decisions? What are the consequences for the story? What are the consequences for the theme? What are the consequences for the game?
+    - In prop2_mission_completed, determine whether the mission is completed based on the last event.
+    - In prop3_next_event_narrative, conjecture a new spin to the story and decide on what happens in the next event, while progressing towards mission completion.
     """
     prompt = textwrap.dedent(f"""_sec
     ### System:
@@ -628,6 +644,7 @@ def generate_prompt_journal():
     {return_habitus()}
 
     ### Journal:
+    {return_mission(mission_id=mission_id)}
     {return_allevents()}
 
     ### Instruction: 
@@ -638,16 +655,16 @@ def generate_prompt_journal():
     return prompt
 
 
-def summarize_journal():
+def summarize_journal(mission_id=None):
 
     schema = get_jsonschema('spr_schema.jinja')
-    prompt = generate_prompt_journal()
-    result = asyncio.run(batch_api(
+    prompt = generate_prompt_journal(mission_id)
+    result = batch_api(
             prompts=prompt, 
             schemas=schema,
             temperature=0.0,
             frequency_penalty=1.0
-            ))
+            )
 
     journal.spr = result
     return
@@ -678,6 +695,7 @@ def compute_event_response(event_id, event):
         # create response event
         response = {}
         response['parent_id'] = event_id
+        response['mission_id'] = event['mission_id']
         response['outcome'] = outcome
         if (outcome > 0):
             effects = choice['success_effects']
@@ -690,10 +708,10 @@ def compute_event_response(event_id, event):
             {"player_option": "Continue"}
         ]
 
-        resolved_effects, tooltip = resolve_gameplay_effects(effects['gameplay_effects'], challenge_rolls, choice['difficulty'])
+        resolved_effects, tooltip = resolve_gameplay_effects(effects['gameplay'], challenge_rolls, choice['difficulty'], outcome)
 
         response['options'][0]['tooltip_message'] = tooltip
-        response['options'][0]['gameplay_effects'] = resolved_effects
+        response['options'][0]['gameplay'] = resolved_effects
 
         load_event(response, gametime.datetime + timedelta(minutes=random.randint(10, 60)), 'event_confirmation')
 
@@ -711,7 +729,8 @@ def compute_event_response(event_id, event):
                 # case 'item_change':
                 #     update_objects()
                 #     pass
-        emitter.emit('generate_action', {'action': 'summarize_journal', 'queue': 'high'})
+        summarize_journal(event['mission_id'])
+        emitter.emit('generate_action', {'action': 'summarize_journal', 'mission_id': event['mission_id'], 'queue': 'high'})
 
         print(f"Event is confirmed")
 
@@ -720,64 +739,66 @@ def compute_event_response(event_id, event):
     # print("generating event")
     # result_analysis = asyncio.run(get_ws_result(prompt, json_schema))
 
-def resolve_gameplay_effects(gameplay_effects, challenge_rolls, difficulty):
+def resolve_gameplay_effects(gameplay_effects, challenge_rolls, difficulty, outcome):
     #calculate effects
     resolved_effects = {}
-    tooltip_message = "Your actions have consequences:\n"
+    tooltip_message = ""
 
-    if (gameplay_effects.get('direct_wealth_increase')):
+    if ('direct_wealth_increase' in gameplay_effects):
         resolved_effects['wealth_change'] = round((5*roll_dice_for_level(difficulty) * roll_dice_for_level(player.commerce)))
-        tooltip_message += f"Your wealth increases with: {resolved_effects['wealth_change']} fl."
+        tooltip_message += f"Your wealth increases with: {resolved_effects['wealth_change']} fl. \n"
 
-    if (gameplay_effects.get('direct_wealth_decrease')):
+    if ('direct_wealth_decrease' in gameplay_effects):
         resolved_effects['wealth_change'] = round((5*roll_dice_for_level(difficulty) * roll_dice_for_level(player.commerce)))
-        tooltip_message += f"Your wealth decreases with: {resolved_effects['wealth_change']} fl."
+        tooltip_message += f"Your wealth decreases with: {resolved_effects['wealth_change']} fl. \n"
         resolved_effects['wealth_change'] *= -1
 
-    if(resolved_effects.get('wealth_change') == False):
+    if('wealth_change' in gameplay_effects) == False:
         resolved_effects['wealth_change'] = 0
 
-    if (gameplay_effects.get('notoriety_increase')):
+    if ('notoriety_increase' in gameplay_effects):
         resolved_effects['notoriety_change']  = roll_dice_for_level(difficulty)
-        tooltip_message += f"Your notoriety increases with: {resolved_effects['notoriety_change']}"
+        tooltip_message += f"Your notoriety increases with: {resolved_effects['notoriety_change']} \n"
 
-    if (gameplay_effects.get('notoriety_decrease')):
+    if ('notoriety_decrease' in gameplay_effects):
         resolved_effects['notoriety_change']  = roll_dice_for_level(difficulty)
-        tooltip_message += f"Your notoriety decreases with: -{resolved_effects['notoriety_change']}"
+        tooltip_message += f"Your notoriety decreases with: -{resolved_effects['notoriety_change']} \n"
         resolved_effects['notoriety_change'] *= -1
 
-    if(resolved_effects.get('notoriety_change') == False):
+    if('notoriety_change' in gameplay_effects == False):
         resolved_effects['notoriety_change'] = 0
 
-    if (gameplay_effects.get('character_change')):
-        tooltip_message += f"You are developing some new quirks. Who knows what you may become?"
+    if ('character_change' in gameplay_effects):
+        tooltip_message += f"You are developing some new quirks. \n"
     else:
         resolved_effects['character_change'] = 0
 
-    if (gameplay_effects.get('standing_change')):
-        tooltip_message += f"People will are starting to view you differently."
+    if ('standing_change' in gameplay_effects):
+        tooltip_message += f"People will are starting to view you differently. \n"
     else:
         resolved_effects['standing_change'] = 0
 
-    if gameplay_effects.get('item_gained'):
+    if 'item_gained' in gameplay_effects:
         resolved_effects['item_change'] = 1
         tooltip_message += f"You received a new item! Let's see what we can do with it. \n"
 
-    if gameplay_effects.get('item_lost'):
+    if 'item_lost' in gameplay_effects:
         resolved_effects['item_change'] = -1
         tooltip_message += f"You lost an item! Let's investigate the damage. \n"
     
-    if(resolved_effects.get('item_change') == False):
+    if ('item_change' in gameplay_effects == False):
         resolved_effects['item_change'] = 0
 
     for key, value in challenge_rolls.items():
-        if (key != 'payment'):
+        if (key != 'payment' and outcome > 0):
             resolved_effects[f'{key}_experience'] = value
             tooltip_message += f"{key} experience gain: {value}\n"
 
     return resolved_effects, tooltip_message.replace("\n", "<br/>")
-    
+
+
 def generate_prompt_event_response():
+    # this should contain the logic for failure and success
     print("generating event response")
 
 def generate_prompt_mission_evaluation():
@@ -843,7 +864,7 @@ def compute_event():
             count_mission_events = 0
             for mission_id in mission_ids:
                 for event_id, event in journal.scheduled.items():
-                    if (event['type'] == 'event_challenge' and event.get('parent_id') == mission_id):
+                    if (event['type'] == 'event_challenge' and event.get('mission_id') == mission_id):
                         count_mission_events += 1
                         mission_ids.remove(mission_id)
                         break
@@ -853,16 +874,16 @@ def compute_event():
             else:
                 mission_id = -1
         prompt = generate_prompt_event(event_difficulty, mission_id)
-        event = asyncio.run(batch_api(
+        event = batch_api(
             prompts=prompt, 
             schemas=schema,
             temperature=0.0,
-            frequency_penalty=1.0
-            ))
+            frequency_penalty=0.1
+            )
 
     event['difficulty'] = event_difficulty
     event['options'] = []
-    event['parent_id'] = mission_id
+    event['mission_id'] = mission_id
 
     # Iterate over the keys in the object
     for key in list(event.keys()):  # We use list() to create a copy of the keys since we'll be modifying the dictionary
@@ -874,7 +895,7 @@ def compute_event():
         multiplier = ((len(event['options'])/2)-event['options'].index(option))*-0.15+1
         option['difficulty'] = round(get_random_value_from_label(event_difficulty)*multiplier)
         option['difficulty_str'] = get_difficulty_from(option['difficulty'])
-        if option.get('challenges').get('perform_payment', False):
+        if ('payment' in option['challenges']):
             option['amount'] = roll_dice_for_level(option['difficulty']) * 10
 
     est_time, est_date = generate_schedule(event)
@@ -901,47 +922,16 @@ def load_event(event, triggerdate, template):
     # append event to Game() scheduled_events
     journal.scheduled[event_id] = event
 
-    print(f"Event scheduled: {journal.scheduled[event_id]}")
-
 
 def generate_schedule(event):
-    trigger_conditionals = event['trigger_conditionals']
-    event.pop('trigger_conditionals')
-
-    # extract data starting with 'must_trigger' into array
-    must_trigger = {k: v for k, v in trigger_conditionals.items() if k.startswith('must_trigger')}
-
-    must_time = retrieve_must_time(must_trigger)
-    must_date = retrieve_must_date(must_trigger)
+    must_time = event['trigger_time_of_day']
+    must_date = event['trigger_date']
+    event.pop('trigger_date')
+    event.pop('trigger_time_of_day')
 
     return must_time, must_date
-
-
-def retrieve_must_time(must_trigger):
-    if (must_trigger['must_trigger_in_morning']):
-        return 'morning'
-    if (must_trigger['must_trigger_in_afternoon']):
-        return 'afternoon'
-    if (must_trigger['must_trigger_in_evening']):
-        return 'evening'
-    if (must_trigger['must_trigger_at_night']):
-        return 'night'
-    else:
-        return False
     
-def retrieve_must_date(must_trigger):
-    if (must_trigger['must_trigger_now']):
-        return 'now'
-    if (must_trigger['must_trigger_today']):
-        return 'today'
-    if (must_trigger['must_trigger_tomorrow']):
-        return 'tomorrow'
-    if (must_trigger['must_trigger_this_week']):
-        return 'this_week'
-    else:
-        return False   
-    
-
+ 
 def get_random_time(time_status):
     # Handling time
     if time_status == 'morning':
@@ -1044,8 +1034,9 @@ def generate_prompt_event(challenge_type,mission_id=-1):
     - Write the event_body directly from on the proceeds and analysis from the last event in the "### Journal".
     - Important: do not repeat the last event. Instead, build on it.
     {rule_1}
-    - Write the event_body briefly and succinctly (max 100 words), and keep it easy to read.
-    - Write the event based on the input provided by "Next_event" in the "### Journal".
+    - Write the event_body briefly and succinctly (max 100 words), and keep it natural and easy to read.
+    - Write the event based on the input provided by the "### Journal".
+    - Take inspiration in writing the event / event_body from the "What may happen next" under "### Journal"
 
     # Other rules
     - Decide on the event location. Ensure it is not too far away from the current location.
@@ -1053,16 +1044,14 @@ def generate_prompt_event(challenge_type,mission_id=-1):
     {rule_2}
     {rule_3}
     - Write the player_options in the order of the difficulty level, from easiest to hardest. The player must pick only 1 option.
-    - For each option determine whether or not (True or False) the player should perform a skill check, or a payment to perform the action. Do not mention this anywhere else. Use the following info to determine whether or not the player needs to perform a skill check:
+    - For  "challenges" list the skill checks the player should perform, or a payment to perform the action. Do not mention this anywhere else. Use the following info to determine whether or not the player needs to perform a skill check:
     'Insight' revolves around the realm of deep intellectual exploration and esoteric wisdom. Rooted in the synthesis of intuitive perception with structured thought, it captures the essence of understanding phenomena that often transcend conventional boundaries.
     'Force' is the confluence of physical might with the ideals of principled leadership. It emphasizes the exertion of authority driven by both inner strength and a commitment to honorable action.
     'Diplomacy', at its core, is the art of navigating and harmonizing interpersonal relationships. It accentuates the importance of building bridges, fostering communal bonds, and skillfully managing social dynamics.  
+    - Do not use the above gameplay jargon in the event_body. Keep it natural and focus on storytelling.
     - For the event_body / narrative effects of each option: write in the present tense and second person (e.g. "You managed to..."). Always directly branch off the options from the event_body. 
-    - For the gameplay_effects of each option: determine whether or not (True or False) the player's stats or financial situation would change. Do not mention this anywhere else.
-    - Ensure the booleans for each option are in line with the event_body / narrative effects of executing the option.
+    - For "gameplay" list which player's stats would change. Do not mention this anywhere else.
     - For each option/decision write a short line of internal dialogue for the player, that is consistent with the player communication style, character and the consequences of the option. Write in the present tense and first person.
-
-    Important: focus on the input provided by Next_event in the "### Journal".
     """
     prompt = textwrap.dedent(f"""
     ### System:
@@ -1076,7 +1065,7 @@ def generate_prompt_event(challenge_type,mission_id=-1):
 
     ### Journal (very important!):
     {return_mission(mission_id=mission_id)}
-    {return_journal()}
+    {return_journal_spr()}
 
     ### Instruction: 
     {return_second_person()}
@@ -1084,6 +1073,7 @@ def generate_prompt_event(challenge_type,mission_id=-1):
     
     ### Response:
     """)
+
     print(prompt)
     return prompt
 
@@ -1092,20 +1082,21 @@ def process_json(json_strings,isDict):
     # Remove '\t' characters
     processed_jsons = []
     for json_string in json_strings:
-        cleaned_string = json_string.replace("\t", "")
-        incorrect_closing_pos = cleaned_string.rfind('"]}')
-        if incorrect_closing_pos != -1:
-            # Remove the incorrect closing and correctly close the JSON
-            last_comma_pos = cleaned_string.rfind(',', 0, incorrect_closing_pos)
-            if last_comma_pos != -1:
-                # Remove the last comma and the incorrect closing, then correctly close the JSON
-                cleaned_string = cleaned_string[:last_comma_pos] + cleaned_string[incorrect_closing_pos:].replace('"]}', '] }')
-            else:
-                # If the last comma is not found, just fix the closing
-                cleaned_string = cleaned_string[:incorrect_closing_pos] + '] }'
-        else:
-            # If the incorrect closing is not found, return the original string
-            cleaned_string = cleaned_string
+        cleaned_string = re.sub(r"prop\d+_", "", json_string)
+        # cleaned_string = json_string.replace("\t", "")
+        # incorrect_closing_pos = cleaned_string.rfind('"]}')
+        # if incorrect_closing_pos != -1:
+        #     # Remove the incorrect closing and correctly close the JSON
+        #     last_comma_pos = cleaned_string.rfind(',', 0, incorrect_closing_pos)
+        #     if last_comma_pos != -1:
+        #         # Remove the last comma and the incorrect closing, then correctly close the JSON
+        #         cleaned_string = cleaned_string[:last_comma_pos] + cleaned_string[incorrect_closing_pos:].replace('"]}', '] }')
+        #     else:
+        #         # If the last comma is not found, just fix the closing
+        #         cleaned_string = cleaned_string[:incorrect_closing_pos] + '] }'
+        # else:
+        #     # If the incorrect closing is not found, return the original string
+        #     cleaned_string = cleaned_string
         processed_jsons.append(cleaned_string)
     if isDict:
         dd = defaultdict(dict)
@@ -1116,8 +1107,10 @@ def process_json(json_strings,isDict):
         return dd
     return json.loads('[' + ', '.join(processed_jsons) + ']')
 
+
+
 # define a simple coroutine
-async def batch_api(prompts, schemas, temperature, frequency_penalty, emit_progress_max=0):
+async def _batch_api(prompts, schemas, temperature, frequency_penalty, emit_progress_max=0):
     tasks = []
     if isinstance(prompts, str):
         tasks = [concept_generator(prompts, schemas, temperature, frequency_penalty, emit_progress_max)]
@@ -1129,21 +1122,20 @@ async def batch_api(prompts, schemas, temperature, frequency_penalty, emit_progr
     results = await asyncio.gather(*tasks)
     print(results)
     if isinstance(prompts, str):
+        results[0] = re.sub(r"prop\d+_", "", results[0])
         return json.loads(results[0])
     return process_json(results,isinstance(prompts, dict))
 
 async def concept_generator(prompt, schema, temperature, frequency_penalty, emit_progress_max, category=0):
-    stream = True
+    stream = False
     response = ""
-    print("prompt:", prompt)
-    print("schema:", schema)
     result = await openai.Completion.acreate(
         model=openai.Model.list()["data"][0]["id"],
         prompt=prompt,
         max_tokens=3000,
         temperature=temperature,
         frequency_penalty=frequency_penalty,
-        stream = True,
+        stream = stream,
         jsonparser=schema)
     
     if stream:
@@ -1155,15 +1147,15 @@ async def concept_generator(prompt, schema, temperature, frequency_penalty, emit
                 socketio.emit('update_progress', {'progress': progress})
             response += c.choices[0].text
     else:
-        print("result:", result)
         if (emit_progress_max!=0):
-            print(len(result.choices[0].text))
             progress = len(result.choices[0].text) / emit_progress_max * 100
             socketio.emit('update_progress', {'progress': progress})
         response = result.choices[0].text  
 
     if category != 0:
         response = '{'+f'"{category}": {response}'+'}'
+
+    print(response)
     return response
 
 def load_game(accepted_proposal: Dict):
@@ -1216,13 +1208,13 @@ def load_game(accepted_proposal: Dict):
             prompts.append(prompt)
             print(prompt)
 
-        concept_list = asyncio.run(batch_api(
+        concept_list = batch_api(
             prompts=prompts, 
             schemas=schemas,
             temperature=0.0,
             frequency_penalty=1.0,
             emit_progress_max=11000
-            ))
+            )
         
         concept_list = {k: v for d in concept_list for k, v in d.items()}
 
@@ -1242,13 +1234,13 @@ def load_game(accepted_proposal: Dict):
                 prompts[category].append(prompt)
                 print(schema)
 
-        items = asyncio.run(batch_api(
+        items = batch_api(
             prompts=prompts, 
             schemas=schemas,
             temperature=0.0,
             frequency_penalty=1.0,
             emit_progress_max=11000
-            ))
+            )
         
         print("result:", items)
 
@@ -1467,8 +1459,44 @@ def generate_concept_details(type,json_state_schema):
     print(prompt)
     return prompt
     
+def run_async_in_thread(coroutine):
+    """
+    Run an async coroutine in a new thread, and return the result.
+    """
+    result = None
+    exception = None
+
+    def thread_target(loop, coroutine):
+        nonlocal result, exception
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(coroutine)
+        except Exception as e:
+            exception = e
+        finally:
+            loop.close()
+
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=thread_target, args=(loop, coroutine))
+    thread.start()
+    thread.join()  # Wait for the thread to complete
+
+    if exception:
+        raise exception  # Re-raise any exception that occurred in the thread
+
+    return result
 
 
+def batch_api(prompts, schemas, temperature, frequency_penalty, emit_progress_max=0):
+    api_args = {
+        "prompts": prompts, 
+        "schemas": schemas,
+        "temperature": temperature,
+        "frequency_penalty": frequency_penalty,
+        "emit_progress_max": emit_progress_max
+    }
+    reponse = run_async_in_thread(_batch_api(**api_args))
+    return reponse
     
 def compute_mission():
 
@@ -1478,12 +1506,12 @@ def compute_mission():
         schema = get_jsonschema('mission_schema.jinja')
         prompt = generate_prompt_mission()
         print(prompt)
-        result = asyncio.run(batch_api(
+        result = batch_api(
             prompts=prompt, 
             schemas=schema,
             temperature=0.0,
             frequency_penalty=1.0
-            ))
+            )
     event = result
 
     event['missions'] = [value for key, value in event['missions'].items()]
@@ -1495,8 +1523,7 @@ def compute_mission():
     load_event(event, gametime.datetime + timedelta(hours=3), 'mission_select')
 
 def generate_prompt_mission():
-    instructions = f"""
-    - Generate THREE missions that are warranted by the player state and game state.
+    instructions = f"""- Generate THREE missions that are warranted by the player state and game state.
     - Ensure that the generated missions BRANCH from the current gamestate and are NOT SEQUENTIAL TO EACH OTHER.
     - Ensure the missions are concrete, clear, interesting and easy to understand. Write in the present tense and second person.
     - Keep the plot of each mission mysterious and open-ended. Do not reveal the outcome of the missions.
@@ -1552,13 +1579,6 @@ def return_connections():
         people = f"Your significant people:\n{player.sig_people_str}\n"
     return notoriety + standing + people
 
-def return_journal():
-    # summary + last events/actions
-    summary = ""
-    if len(journal.summary) > 1:
-        summary = f"Your journal: {player.background}\n"
-    return summary
-
 def return_habitus():
     lifestyle = ""
     objects = ""
@@ -1574,7 +1594,9 @@ def return_habitus():
 
 def return_mission(mission_id = -1, event_id = -1):
     if (event_id != -1):
-        mission_id = int(journal.scheduled.get(event_id).get('parent_id',-1))
+        print(f"Event id: {event_id}")
+        mission_id = int(journal.scheduled.get(event_id).get('mission_id',-1))
+        print(f"Mission id: {mission_id}")
     if (mission_id == -1):
         mission = None
         return ""
@@ -1587,7 +1609,7 @@ def return_mission(mission_id = -1, event_id = -1):
     
 def return_allevents():
     counter = 0
-    progress = "\n\n# Your mission log (descending from earliest event to most recent / latest event):\n"
+    progress = "\n\n# Your mission log (descending from the earliest / oldest event to the most recent / latest event):\n"
     for event in journal.readme:
         counter += 1
         if counter == len(journal.readme):
@@ -1598,14 +1620,11 @@ def return_allevents():
         progress = ""
     return progress
     
-def return_journal():
+def return_journal_spr():
         progress = ""
         if hasattr(journal, 'spr'):
-            progress = f"""Last event: \n{journal.readme[-1].get('story')}
-            Analysis of last event: {journal.spr['consequences_analysis_of_last_event']}\n
-            Hooks to earlier events: {journal.spr['hooks_to_earlier_events']}\n
-            Hooks to gamestate: {journal.spr['hooks_to_game_state']}\n
-            Next_event (!!!Important!!!): {journal.spr['next_event_narrative']}
+            progress = f"""Analysis of last event: {journal.spr['consequences_analysis_of_last_event']}\n
+            What may happen next: {journal.spr['next_event_narrative']}
             """
         return progress
 

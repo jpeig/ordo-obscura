@@ -8,30 +8,30 @@
     <div class="mdl-card__actions mdl-card--border">
         {% for act in event['options'] %}
         <a id="option-{{ loop.index }}" class="action mdl-button mdl-button--colored mdl-js-button mdl-js-ripple-effect">
-            {{act['player_option']}}
+            {{ act['player_option'] }}
         </a>
         <!-- Simple Tooltip -->
         <div class="mdl-tooltip" id="tooltip" data-mdl-for="option-{{ loop.index }}">
-            {% if act['challenges']['perform_payment'] %}
-            You lose {{act['amount']}} fl.<br><br>
+            {% if 'payment' in act['challenges'] %}
+                You lose {{ act['amount'] }} fl.<br><br>
             {% endif %}
-            {{act['internal_dialogue']}}<br><br>
-            {% if (act['challenges']['perform_insight_check'] or act['challenges']['perform_force_check'] or act['challenges']['perform_diplomacy_check']) %}
-            This challenge is considered {{act['difficulty_str']}}.
+            {{ act['internal_dialogue'] }}<br><br>
+            {% if ('insight' in act['challenges'] or 'force' in act['challenges'] or 'diplomacy' in act['challenges']) %}
+                This challenge is considered {{ act['difficulty_str'] }}.
             {% endif %}
             <div class="icon-row">
-                {% if act['challenges']['perform_insight_check'] %}
-                <i class="material-icons md-16">visibility</i>
+                {% if 'insight' in act['challenges'] %}
+                    <i class="material-icons md-16">visibility</i>
                 {% endif %}
-                {% if act['challenges']['perform_force_check'] %}
-                <i class="material-icons material-symbols-outlined md-16">swords</i>
+                {% if 'force' in act['challenges'] %}
+                    <i class="material-icons material-symbols-outlined md-16">swords</i>
                 {% endif %}
-                {% if act['challenges']['perform_diplomacy_check'] %}
-                <i class="material-icons md-16">public</i>
+                {% if 'diplomacy' in act['challenges'] %}
+                    <i class="material-icons md-16">public</i>
                 {% endif %}
             </div>
          </div>
-         {% endfor %}
+    {% endfor %}
     </div>
     <div class="mdl-card__menu">
         <button id="share" class="mdl-button mdl-button--icon mdl-js-button mdl-js-ripple-effect">

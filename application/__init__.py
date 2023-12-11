@@ -1,7 +1,6 @@
 from flask import Flask, g
 from flask_redis import FlaskRedis
 from flask_socketio import SocketIO
-from flask_rq2 import RQ
 
 class EventEmitter:
     def __init__(self):
@@ -23,7 +22,6 @@ class EventEmitter:
 # Globally accessible libraries
 redis = FlaskRedis()
 socketio = SocketIO()
-rq = RQ()
 emitter = EventEmitter()
 
 def init_app():
@@ -34,7 +32,6 @@ def init_app():
     # Initialize Plugins
     redis.init_app(app)
     socketio.init_app(app, message_queue=app.config['REDIS_URL'])
-    rq.init_app(app)
 
     with app.app_context():
 

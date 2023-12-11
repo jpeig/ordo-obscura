@@ -12,7 +12,7 @@
         </a>
         <!-- Simple Tooltip -->
         <div class="mdl-tooltip" id="tooltip" data-mdl-for="option-{{ loop.index }}">
-            {{act['tooltip_message']}}
+            {{act['tooltip_message'] | safe }}
          </div>
          {% endfor %}
     </div>
